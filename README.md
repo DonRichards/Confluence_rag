@@ -25,8 +25,7 @@ It is recommended to run the project within a Python virtual environment to mana
 - **Using Terminal**:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+pipenv install  # This will create a virtual environment and install dependencies
 ```
 
 ### 3. Install Dependencies
@@ -34,7 +33,7 @@ source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 After activating the virtual environment, install the required dependencies.
 
 ```bash
-pip install -r requirements.txt
+pipenv install -r requirements.txt
 ```
 
 ### 4. Environment Variables
@@ -57,7 +56,7 @@ To import your data from Confluence, run the following command:
 Review the main function of the application to understand the flow of the application.
 
 ```bash
-python app_confluence.py
+pipenv run python app_confluence.py
 ```
 
 ### Run Pinecone and OpenAI Application
@@ -66,7 +65,7 @@ To execute the Pinecone and OpenAI integration:
 Review the main function of the application to understand the flow of the application.
 
 ```bash
-python app_pinecone_openai.py
+pipenv run python app_pinecone_openai.py
 ```
 
 ## Additional Resources
