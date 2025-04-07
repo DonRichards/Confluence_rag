@@ -2,8 +2,6 @@
 
 This project integrates Confluence, Pinecone, and OpenAI to implement a retrieval augmented generation system. It is designed to run on Python 3.9.6.
 
-[YouTube Video](https://youtu.be/zjdFOwBxBRo)
-
 ![Demo](demo.png)
 
 ## Prerequisites
