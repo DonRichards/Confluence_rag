@@ -813,7 +813,7 @@ if __name__ == "__main__":
             background-color: var(--white) !important;
             max-width: 1200px !important;
             margin: 0 auto !important;
-            box-shadow: none !important;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1) !important;
             border-radius: 8px !important;
         }
         
@@ -852,18 +852,14 @@ if __name__ == "__main__":
             font-size: 16px !important;
         }
         
-        .gradio-textbox textarea:focus {
-            border-color: var(--spirit-blue) !important;
-            box-shadow: 0 0 0 2px rgba(104, 172, 229, 0.2) !important;
-        }
-        
         /* Button styling */
         button {
             background-color: var(--heritage-blue) !important;
             color: white !important;
             border-radius: 8px !important;
             font-weight: 600 !important;
-            transition: all 0.2s ease !important;
+            transition: all 0.3s ease !important;
+            padding: 10px 15px !important;
         }
         
         button:hover {
@@ -879,26 +875,6 @@ if __name__ == "__main__":
         
         button.secondary:hover {
             background-color: #CCCCCC !important;
-        }
-        
-        /* Copy button styling */
-        #copy-button {
-            min-width: 40px !important;
-            width: 40px !important;
-            height: 40px !important;
-            padding: 0 !important;
-            border-radius: 50% !important;
-            font-size: 20px !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            margin: 10px auto !important;
-            background-color: var(--spirit-blue) !important;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1) !important;
-        }
-        
-        #copy-button:hover {
-            background-color: var(--medium-blue) !important;
         }
         
         /* Source links styling */
@@ -937,12 +913,6 @@ if __name__ == "__main__":
         /* Emphasized text */
         strong, b {
             font-weight: 700 !important;
-        }
-        
-        /* Message links for better visibility */
-        .gradio-chatbot [class*="bot"] a {
-            color: #0055AA !important;
-            text-decoration: underline !important;
         }
         
         /* Chatbot scrollbar styling */

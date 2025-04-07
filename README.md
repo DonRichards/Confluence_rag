@@ -4,6 +4,8 @@ This project integrates Confluence, Pinecone, and OpenAI to implement a retrieva
 
 [YouTube Video](https://youtu.be/zjdFOwBxBRo)
 
+![Demo](demo.png)
+
 ## Prerequisites
 
 - Python 3.9.6
