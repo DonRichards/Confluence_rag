@@ -1,0 +1,195 @@
+:root {
+    --heritage-blue: #002D72;
+    --medium-blue: #0072CE;
+    --light-gray: #E2E8F0;
+    --text-gray: #4A5568;
+    --dark-bg: #0F172A;
+    --jhu-blue: #002D72;
+    --jhu-white: #FFFFFF;
+    --jhu-light-blue: #E2E8F0;
+}
+
+/* Body styling */
+body {
+    background-color: var(--jhu-white) !important;
+    color: var(--jhu-blue) !important;
+}
+
+/* Header styling */
+.header-container {
+    display: flex;
+    align-items: center;
+    padding: 20px 0 10px 0;
+    margin-bottom: 15px;
+    justify-content: flex-start;
+}
+
+.title-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.jhu-title {
+    color: var(--jhu-blue) !important;
+    font-size: 18px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.assistant-title {
+    color: var(--jhu-blue) !important;
+    font-size: 28px;
+    margin: 0;
+    font-weight: bold;
+}
+
+.input-prefix {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 40px;
+    width: 40px;
+    font-size: 20px;
+    font-weight: bold;
+    color: var(--jhu-blue) !important;
+}
+
+.chat-response {
+    background-color: var(--jhu-white);
+    color: var(--jhu-blue);
+    width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+.question-banner {
+    background-color: var(--jhu-light-blue) !important;
+    color: var(--jhu-blue) !important;
+    padding: 12px 20px;
+    margin: 0;
+    width: 100%;
+    font-weight: 500;
+    font-size: 16px;
+}
+
+.answer-content {
+    font-size: 16px;
+    line-height: 1.5;
+    margin: 20px;
+    color: var(--jhu-blue) !important;
+    max-width: 1200px;
+}
+
+/* Style ordered list numbers */
+.answer-content ol li::marker {
+    color: #CF4520 !important; /* Set marker color */
+    font-weight: bold; /* Optionally make them bold */
+}
+
+.session-info {
+    color: var(--jhu-blue) !important;
+    font-size: 14px;
+    margin: 20px;
+}
+
+.sources-section {
+    margin: 20px;
+    color: var(--jhu-blue) !important;
+    background-color: var(--jhu-white);
+}
+
+.sources-header {
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: var(--jhu-blue);
+}
+
+.sources-list {
+    list-style-type: disc;
+    padding-left: 20px;
+    margin-top: 5px;
+}
+
+.source-item {
+    margin-bottom: 8px;
+    display: list-item;
+}
+
+.source-link {
+    color: var(--medium-blue) !important;
+    text-decoration: none;
+    margin-left: 25px;
+    display: inline-block;
+}
+
+.source-link:hover {
+    text-decoration: underline;
+}
+
+.similarity-score {
+    color: var(--text-gray);
+    font-size: 14px;
+    margin-left: 10px;
+}
+
+.instruction-text {
+    margin: 20px;
+    color: var(--jhu-blue) !important;
+    font-size: 14px;
+    font-style: italic;
+}
+
+/* Style input area */
+.gr-textbox textarea {
+    background-color: var(--jhu-white) !important;
+    color: var(--jhu-blue) !important;
+    border-color: var(--jhu-light-blue) !important;
+}
+
+.gr-button {
+    background-color: var(--jhu-light-blue) !important;
+    color: var(--jhu-blue) !important;
+    border: none !important;
+}
+
+/* Gradio overrides */
+.gradio-container {
+    max-width: 1200px !important;
+    margin: 0 auto !important;
+    background-color: var(--jhu-white) !important;
+}
+
+.chatbot {
+    height: 700px;
+    overflow-y: auto;
+    background-color: var(--jhu-white) !important; /* Explicitly set chatbot background to white */
+}
+
+.chatbot .user {
+    background-color: var(--jhu-light-blue) !important;
+    color: var(--jhu-blue) !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 12px 20px !important;
+}
+
+.chatbot .bot {
+    /* Ensure bot messages have white background */
+    background-color: var(--jhu-white) !important;
+    color: var(--jhu-blue) !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.message {
+    padding: 0 !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    /* Ensure message container itself has white background */
+    background-color: var(--jhu-white) !important;
+}
