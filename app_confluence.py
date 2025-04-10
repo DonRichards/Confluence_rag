@@ -9,12 +9,28 @@ from utils.auth import get_confluence_client
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Get the domain from the environment variable if it exists, otherwise warn the user and exit
 confluence_domain = os.getenv("CONFLUENCE_DOMAIN")
-# username = os.getenv("username")
-# password = os.getenv("password")
-confluence_api_key = os.getenv("CONFLUENCE_API_KEY")
-# Set your Confluence details here
-space_key = 'SUP'  # replace with your info
+username = os.getenv("USERNAME")
+password = os.getenv("PASSWORD")
+confluence_api_key = os.getenv("CONFLUENCE_ACCESS_TOKEN")
+
+if not confluence_domain and not username:
+    print("Warning: CONFLUENCE_DOMAIN/CONFLUENCE_ACCESS_TOKEN or USERNAME/PASSWORD environment variables not found. Please set them and try again.")
+    sys.exit(1)
+
+if not password and not confluence_api_key:
+    print("Warning: CONFLUENCE_DOMAIN/CONFLUENCE_ACCESS_TOKEN or USERNAME/PASSWORD environment variables not found. Please set them and try again.")
+    sys.exit(1)
+
+# Grab the first space key from the environment variable if it exists, otherwise warn the user and exit
+# Dev Notes: Original variable was SUP
+space_keys = os.getenv("SPACES")
+space_key = space_keys[0] if space_keys else None
+if not space_key:
+    print("Warning: SPACES environment variable not found. Please set it and try again.")
+    sys.exit(1)
 
 # Function to fetch pages from Confluence
 def fetch_pages(start=0, limit=25):

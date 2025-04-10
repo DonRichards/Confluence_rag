@@ -57,6 +57,7 @@ body {
 }
 
 .chat-response {
+    position: relative;
     background-color: var(--jhu-white);
     color: var(--jhu-blue);
     width: 100%;
@@ -80,6 +81,8 @@ body {
     margin: 20px;
     color: var(--jhu-blue) !important;
     max-width: 1200px;
+    cursor: text !important;
+    user-select: text !important;
 }
 
 /* Style ordered list numbers */
@@ -146,6 +149,7 @@ body {
     background-color: var(--jhu-white) !important;
     color: var(--jhu-blue) !important;
     border-color: var(--jhu-light-blue) !important;
+    cursor: auto !important; /* Ensure default text cursor */
 }
 
 .gr-button {
@@ -192,4 +196,27 @@ body {
     border: none !important;
     /* Ensure message container itself has white background */
     background-color: var(--jhu-white) !important;
+}
+
+/* Copy button styling */
+.copy-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    color: var(--text-gray); /* Use a subtle color */
+    opacity: 0.7; /* Slightly transparent */
+    transition: opacity 0.2s ease, color 0.2s ease;
+}
+
+.copy-button:hover {
+    color: var(--medium-blue);
+    opacity: 1;
+}
+
+.copy-button svg {
+    display: block; /* Prevent extra space below SVG */
 }

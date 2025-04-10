@@ -23,7 +23,15 @@ def delete_pinecone_index(index_name):
 def get_pinecone_index(index_name):
     print(f"Checking if index {index_name} exists.")
     index_created = False
-    if index_name in [index.name for index in pinecone.list_indexes()]:
+    
+    # Get list of indexes
+    indexes = pinecone.list_indexes()
+    
+    # Extract index names from objects
+    index_names = [idx.name for idx in indexes]
+    print(f"Available index names: {index_names}")
+    
+    if index_name in index_names:
         print(f"Index {index_name} already exists, good to go.")
         index = pinecone.Index(index_name)
     else:

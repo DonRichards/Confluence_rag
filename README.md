@@ -25,15 +25,7 @@ It is recommended to run the project within a Python virtual environment to mana
 - **Using Terminal**:
 
 ```bash
-pipenv install  # This will create a virtual environment and install dependencies
-```
-
-### 3. Install Dependencies
-
-After activating the virtual environment, install the required dependencies.
-
-```bash
-pipenv install -r requirements.txt
+pipenv install --dev
 ```
 
 ### 4. Environment Variables
@@ -74,3 +66,12 @@ pipenv run python app_pinecone_openai.py
 ![RAG Flow Chart](rag_flowchart.png "Retrieval Augmented Generation Flow Chart")
 
 ## Thank you and happy coding!
+
+
+## Troubleshooting
+
+If you encouter issues with `pipenv install` try:
+
+```bash
+pipenv install --dev --skip-lock
+```

@@ -20,9 +20,34 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # get embeddings
 def get_embeddings(query, model_emb):
-   embedding = openai_client.embeddings.create(input = query, model=model_emb)
-   print("Dimension of query embedding: ", len(embedding.data[0].embedding))
-   return embedding
+   try:
+       if not query or not query.strip():
+           raise ValueError("Empty query provided for embedding generation")
+           
+       if not model_emb:
+           raise ValueError("No embedding model specified")
+       
+       embedding = openai_client.embeddings.create(input=query, model=model_emb)
+       
+       if not embedding or not hasattr(embedding, 'data') or not embedding.data:
+           raise ValueError("Received invalid embedding response from OpenAI")
+           
+       embedding_vector = embedding.data[0].embedding
+       vector_length = len(embedding_vector)
+       
+       if vector_length == 0:
+           raise ValueError("Received empty embedding vector from OpenAI")
+           
+       print(f"Dimension of query embedding: {vector_length}")
+       return embedding
+   except (AttributeError, IndexError) as struct_err:
+       error_msg = f"Malformed response from OpenAI embedding API: {str(struct_err)}"
+       print(error_msg)
+       raise ValueError(error_msg) from struct_err
+   except Exception as e:
+       error_msg = f"Error generating embeddings: {str(e)}"
+       print(error_msg)
+       raise RuntimeError(error_msg) from e
 
 def create_embeddings(text, model_emb):   
     response = openai_client.embeddings.create(
@@ -51,16 +76,43 @@ def add_prompt_messages(role, content, messages):
 
 def get_chat_completion_messages(messages, model_chat, temperature=0.0): 
     try:
+        if not messages:
+            raise ValueError("No messages provided for chat completion")
+            
+        if not model_chat:
+            raise ValueError("No chat model specified")
+            
+        # Validate messages format
+        for msg in messages:
+            if not isinstance(msg, dict) or 'role' not in msg or 'content' not in msg:
+                raise ValueError(f"Invalid message format: {msg}")
+                
+        # Set reasonable timeout and max retries
         response = openai_client.chat.completions.create(
-        model=model_chat,
-        messages=messages,
-        temperature=temperature,
-    )
-    except Exception as e:
-        print(e)
-        sys.exit()
-    else:
+            model=model_chat,
+            messages=messages,
+            temperature=temperature,
+            timeout=30,  # 30 second timeout
+        )
+        
+        if not response or not hasattr(response, 'choices') or not response.choices:
+            raise ValueError("Received invalid completion response from OpenAI")
+            
+        if not hasattr(response.choices[0], 'message') or not response.choices[0].message:
+            raise ValueError("No message in completion response")
+            
+        if not hasattr(response.choices[0].message, 'content'):
+            raise ValueError("No content in completion message")
+            
         return response.choices[0].message.content
+    except (AttributeError, IndexError, KeyError) as struct_err:
+        error_msg = f"Malformed response from OpenAI completion API: {str(struct_err)}"
+        print(error_msg)
+        raise ValueError(error_msg) from struct_err
+    except Exception as e:
+        error_msg = f"Error in chat completion: {str(e)}"
+        print(error_msg)
+        raise RuntimeError(error_msg) from e
 
 def create_system_prompt():
     system_prompt = f"""
