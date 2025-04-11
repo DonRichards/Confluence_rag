@@ -13,6 +13,8 @@ import time
 import json
 from datetime import datetime
 import logging
+import subprocess
+import pathlib
 
 # load environment variables
 load_dotenv(find_dotenv())
@@ -764,6 +766,132 @@ def display_content(content):
     # Continue with the rest of the display logic
     return content
 
+# Function to update database from Confluence
+def update_database_from_confluence():
+    """
+    Directly calls functions to fetch latest data from Confluence and update Pinecone.
+    Returns a message with the result.
+    """
+    debug_mode = os.getenv('DEBUG', 'False').lower() == 'true'
+    debug_info = []
+    
+    try:
+        # Create timestamp file path
+        timestamp_file = os.path.join(os.getcwd(), "data", "last_update.txt")
+        os.makedirs(os.path.dirname(timestamp_file), exist_ok=True)
+        
+        if debug_mode:
+            debug_info.append("Starting database update process...")
+            debug_info.append(f"Timestamp file path: {timestamp_file}")
+        
+        # Import and run Confluence fetch
+        if debug_mode:
+            debug_info.append("Fetching latest data from Confluence...")
+        try:
+            from app_confluence import fetch_all_spaces
+            fetch_result = fetch_all_spaces()
+            if debug_mode:
+                debug_info.append("Confluence fetch completed")
+                if fetch_result:
+                    debug_info.append(f"Fetched {len(fetch_result)} spaces")
+        except Exception as e:
+            error_msg = f"Error fetching data from Confluence: {str(e)}"
+            if debug_mode:
+                debug_info.append(error_msg)
+                debug_info.append(f"Exception type: {type(e).__name__}")
+            return error_msg
+        
+        # Import and run database update
+        if debug_mode:
+            debug_info.append("Updating Pinecone database...")
+        try:
+            from update_database import update_database
+            update_result = update_database()
+            if debug_mode:
+                debug_info.append("Database update completed")
+                if update_result:
+                    debug_info.append(f"Updated {update_result} records")
+        except Exception as e:
+            error_msg = f"Error updating database: {str(e)}"
+            if debug_mode:
+                debug_info.append(error_msg)
+                debug_info.append(f"Exception type: {type(e).__name__}")
+            return error_msg
+        
+        # Update timestamp file
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(timestamp_file, "w") as f:
+            f.write(current_time)
+        
+        if debug_mode:
+            debug_info.append(f"Updated timestamp to: {current_time}")
+            debug_info.append("Database update completed successfully!")
+            return "\n".join(debug_info)
+        
+        return "Database successfully updated with latest Confluence data!"
+    except Exception as e:
+        error_msg = f"Error updating database: {str(e)}"
+        if debug_mode:
+            debug_info.append(error_msg)
+            debug_info.append(f"Exception type: {type(e).__name__}")
+            debug_info.append(f"Exception details: {str(e)}")
+            return "\n".join(debug_info)
+        return error_msg
+
+# Function to get last update time
+def get_last_update_time():
+    """
+    Returns the last time the database was updated along with stats from Pinecone.
+    """
+    try:
+        # Get timestamp from file
+        timestamp_file = os.path.join(os.getcwd(), "data", "last_update.txt")
+        timestamp = "Unknown"
+        
+        if os.path.exists(timestamp_file):
+            with open(timestamp_file, "r") as f:
+                timestamp = f.read().strip()
+        
+        # Format the timestamp nicely
+        try:
+            dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+            formatted_time = dt.strftime("%B %d, %Y at %I:%M %p")
+        except:
+            formatted_time = timestamp
+        
+        # Get Pinecone stats
+        index = init_pinecone()
+        if index:
+            try:
+                # Get stats from Pinecone
+                stats = index.describe_index_stats()
+                total_vectors = stats.get('total_vector_count', 0)
+                namespaces = stats.get('namespaces', {})
+                
+                # Format the output
+                pinecone_info = f"{total_vectors:,} vectors in database"
+                
+                if namespaces:
+                    namespace_info = []
+                    for ns, ns_stats in namespaces.items():
+                        ns_count = ns_stats.get('vector_count', 0)
+                        namespace_info.append(f"{ns}: {ns_count:,}")
+                    
+                    if namespace_info:
+                        pinecone_info += f" ({', '.join(namespace_info)})"
+                
+                return f"Last updated: {formatted_time}\n{pinecone_info}"
+            except Exception as e:
+                # Handle connection errors gracefully
+                if "503" in str(e) or "connect error" in str(e):
+                    return f"Last updated: {formatted_time}\nPinecone database temporarily unavailable"
+                return f"Last updated: {formatted_time}\nError retrieving database stats"
+        
+        return f"Last updated: {formatted_time}\nDatabase connection not available"
+    except Exception as e:
+        print(f"Error getting update status: {str(e)}")
+        return "Unable to retrieve update status"
+
 if __name__ == "__main__":
     # Create a custom light theme for Gradio
     light_theme = gr.themes.Default(
@@ -796,20 +924,201 @@ if __name__ == "__main__":
         theme=light_theme,
         css="web_resources/main.css",
     ) as demo:
+        # Add custom CSS for the update button and global JavaScript functions
+        gr.HTML("""
+        <style>
+            .update-icon-button {
+                background: none;
+                border: none;
+                cursor: pointer;
+                padding: 5px 10px;
+                display: flex;
+                align-items: center;
+                border-radius: 4px;
+                transition: background-color 0.2s;
+            }
+            
+            .update-icon-button:hover {
+                background-color: rgba(0, 45, 114, 0.1);
+            }
+            
+            .update-icon-button svg {
+                transition: transform 0.3s;
+            }
+            
+            .update-icon-button:hover svg {
+                transform: rotate(180deg);
+            }
+            
+            #update-status {
+                margin-left: 5px;
+                font-size: 12px;
+                color: #002D72;
+                transition: color 0.2s;
+            }
+            
+            .update-icon-button:hover #update-status {
+                color: #0056b3;
+            }
+        </style>
+        <script>
+            // Define global functions
+            window.isUpdating = false;
+            window.debugMode = """ + str(os.getenv('DEBUG', 'False').lower() == 'true').lower() + """;
+            console.log('Global JavaScript initialized, debug mode:', window.debugMode);
+
+            // Define the update function globally
+            window.try_update = function(button) {
+                console.log('Update button clicked');
+                
+                // If already updating, ignore the click
+                if (window.isUpdating) {
+                    console.log('Update already in progress, ignoring click');
+                    return;
+                }
+                
+                // Set updating state
+                console.log('Starting update process');
+                window.isUpdating = true;
+                button.setAttribute('data-status', 'Updating...');
+                button.style.opacity = '0.7';
+                button.style.cursor = 'wait';
+                
+                // Find and click the appropriate button in the Gradio interface
+                setTimeout(function() {
+                    try {
+                        // Use document.querySelector to find elements in both shadow DOM and regular DOM
+                        const updateButton = document.querySelector('button[data-testid="update_database_from_confluence"]');
+                        if (updateButton) {
+                            console.log('Found update button, clicking it');
+                            updateButton.click();
+                            
+                            // Show success message briefly
+                            setTimeout(function() {
+                                console.log('Update completed');
+                                button.setAttribute('data-status', 'Update Complete!');
+                                
+                                // Reset the button state after a delay
+                                setTimeout(function() {
+                                    window.reset_button_state(button);
+                                }, 2000);
+                            }, 3000);
+                            return;
+                        } else {
+                            console.error('Could not find the update button');
+                            // Try alternate method with shadowRoot
+                            const gradioApp = document.querySelector('gradio-app');
+                            if (gradioApp) {
+                                const root = gradioApp.shadowRoot || gradioApp;
+                                const updateButton = root.querySelector('button[data-testid="update_database_from_confluence"]');
+                                if (updateButton) {
+                                    console.log('Found update button in shadow DOM, clicking it');
+                                    updateButton.click();
+                                    
+                                    // Show success message briefly
+                                    setTimeout(function() {
+                                        console.log('Update completed');
+                                        button.setAttribute('data-status', 'Update Complete!');
+                                        
+                                        // Reset the button state after a delay
+                                        setTimeout(function() {
+                                            window.reset_button_state(button);
+                                        }, 2000);
+                                    }, 3000);
+                                    return;
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error finding update button:', error);
+                    }
+                    
+                    // If we get here, the update failed
+                    button.setAttribute('data-status', 'Update Failed');
+                    console.log('Setting failure timeout');
+                    setTimeout(function() {
+                        window.reset_button_state(button);
+                    }, 2000);
+                }, 500);
+            };
+            
+            // Define reset function globally
+            window.reset_button_state = function(button) {
+                console.log('Resetting button state');
+                window.isUpdating = false;
+                button.style.opacity = '1';
+                button.style.cursor = 'pointer';
+                // The status will be updated automatically by Gradio's response
+                console.log('Reset complete');
+            };
+        </script>
+        """)
+        
         # Create a header with JHU branding
         with gr.Row(elem_id="header"):
             with gr.Column(scale=1):
+                # Add JHU logo and title
                 gr.HTML("""
-                    <div class="header-container">
-                        <img src="/file=web_resources/university.shield.rgb.blue.svg" alt="JHU Logo" class="jhu-logo" style="max-width: 100px;">
+                <div class="header-container">
+                    <img src="/file=web_resources/university.shield.rgb.blue.svg" alt="JHU Logo" class="jhu-logo" style="max-width: 100px;">
 
-                        <div class="title-container">
-                            <h1 class="jhu-title">JOHNS HOPKINS UNIVERSITY</h1>
-                            <h2 class="assistant-title">Confluence Knowledge Assistant</h2>
-                        </div>
+                    <div class="title-container">
+                        <h1 class="jhu-title">JOHNS HOPKINS UNIVERSITY</h1>
+                        <h2 class="assistant-title">Confluence Knowledge Assistant</h2>
                     </div>
+                </div>
                 """)
         
+        # Create a more compact update button and status text
+        with gr.Row():
+            with gr.Column():
+                update_button = gr.Button(
+                    value="🔄 Update Knowledge Base",
+                    variant="primary",
+                    elem_id="update-button",
+                    scale=1
+                )
+                update_status = gr.Markdown(
+                    value=get_last_update_time(),
+                    elem_id="update-status"
+                )
+
+        # Add custom CSS for the update button and status
+        gr.HTML("""
+        <style>
+            #update-button {
+                background-color: #1e293b !important;
+                color: white !important;
+                border-radius: 4px !important;
+                margin: 5px 0 !important;
+                padding: 8px 16px !important;
+                min-height: 40px !important;
+                width: 100% !important;
+                font-size: 1rem !important;
+                font-weight: 500 !important;
+                transition: all 0.3s ease !important;
+            }
+            
+            #update-button:hover {
+                background-color: #334155 !important;
+            }
+            
+            #update-button:active {
+                transform: scale(0.98) !important;
+            }
+            
+            #update-status {
+                text-align: center !important;
+            }
+
+            #update-status span p {
+                font-size: 0.7rem !important;
+                color: black !important;
+                text-align: center !important;
+            }
+        </style>
+        """)
+
         # Create the chatbot interface
         chatbot = gr.Chatbot(
             elem_id="chatbot",
@@ -838,6 +1147,19 @@ if __name__ == "__main__":
             inputs=[msg, chatbot],
             outputs=[chatbot],
             api_name="chat",
+        )
+        
+        # Bind the update button to the update_database_from_confluence function
+        update_click_event = update_button.click(
+            fn=update_database_from_confluence,
+            outputs=[update_status],
+            show_progress=True
+        )
+        
+        # After update is complete, update the status with latest timestamp
+        update_click_event.then(
+            fn=get_last_update_time,
+            outputs=[update_status]
         )
         
         # Bind the Enter key to submit

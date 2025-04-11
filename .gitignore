@@ -164,3 +164,4 @@ backup/kb_25_demo.csv
 backup/kb_222_demo.csv
 
 conversation_logs/
+data/last_update.txt

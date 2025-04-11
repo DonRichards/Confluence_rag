@@ -4,6 +4,7 @@ from dotenv import load_dotenv, find_dotenv
 from utils.pinecone_logic import get_pinecone_index, upsert_data
 from utils.data_prep import import_csv, clean_data_pinecone_schema, generate_embeddings_and_add_to_df
 import sys
+from datetime import datetime
 
 # load environment variables
 load_dotenv(find_dotenv())
@@ -52,6 +53,13 @@ def update_database(csv_file="./data/kb.csv"):
     # Upsert data to Pinecone
     print("Upserting data to Pinecone index...")
     upsert_data(index, df)
+    
+    # Update timestamp file
+    timestamp_file = os.path.join(os.getcwd(), "data", "last_update.txt")
+    os.makedirs(os.path.dirname(timestamp_file), exist_ok=True)
+    with open(timestamp_file, "w") as f:
+        f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print(f"Updated timestamp file: {timestamp_file}")
     
     print("Database update completed successfully!")
     return True
