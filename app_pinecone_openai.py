@@ -526,6 +526,20 @@ def init_pinecone():
         index_name = os.getenv('PINECONE_INDEX_NAME', 'default-index')
         index, _ = get_pinecone_index(index_name)
         
+        # Verify the index has data
+        try:
+            stats = index.describe_index_stats()
+            if not stats or 'total_vector_count' not in stats:
+                print("Warning: Could not retrieve index stats")
+            else:
+                vector_count = stats['total_vector_count']
+                if vector_count <= 0:
+                    print(f"Warning: Index contains no vectors. Database is empty and needs to be populated.")
+                else:
+                    print(f"Index contains {vector_count} vectors. Database is ready for queries.")
+        except Exception as e:
+            print(f"Warning: Could not verify index data: {e}")
+        
         print("Done: Pinecone initialized successfully")
         return index
     except Exception as e:
@@ -667,17 +681,31 @@ def chat_function(message, history):
         # Initialize Pinecone
         index = init_pinecone()
         if not index:
-            return history + [(message, "Sorry, I couldn't connect to the knowledge base. Please try again later.")]
+            return history + [(message, "Sorry, I couldn't connect to the knowledge base. Please check that your Pinecone API key and environment variables are set correctly.")]
+            
+        # Verify the index has data
+        try:
+            stats = index.describe_index_stats()
+            if stats and 'total_vector_count' in stats and stats['total_vector_count'] <= 0:
+                error_message = (
+                    "Your Pinecone database is empty. No vectors have been added yet. "
+                    "Please run the update_database.py script to populate your database with data. "
+                    "You can do this by running: python update_database.py --csv-file=your_data.csv"
+                )
+                return history + [(message, error_message)]
+        except Exception as e:
+            print(f"Error checking index stats: {str(e)}")
+            # Continue execution since this is just a warning
             
         # Query Pinecone
         results = query_pinecone(index, message)
         if not results:
-            return history + [(message, "I couldn't find any relevant information. Please try rephrasing your question.")]
+            return history + [(message, "I couldn't find any relevant information. This could mean your question is outside the scope of the knowledge base, or the knowledge base doesn't contain the necessary data. Please try rephrasing your question or updating the database with more relevant content.")]
             
         # Generate answer with OpenAI
         answer = generate_answer(message, results, history)
         if not answer:
-            return history + [(message, "I couldn't generate an answer. Please try again.")]
+            return history + [(message, "I couldn't generate an answer. Please try again or check the OpenAI API key.")]
         
         # --- ORIGINAL CODE (Restored) ---
         # Create session ID for this specific interaction
@@ -744,6 +772,13 @@ def chat_function(message, history):
         logging.error(f"Error in chat function: {str(e)}")
         # Return a user-friendly error message in the chat history format
         error_message = f'<div style="color: red; padding: 10px;">An error occurred: {str(e)}</div>'
+        
+        # Provide more helpful message for specific error types
+        if "pinecone" in str(e).lower():
+            error_message = f'<div style="color: red; padding: 10px;">Pinecone error: {str(e)}<br><br>To troubleshoot, run: python app_pinecone_openai.py --debug-pinecone</div>'
+        elif "openai" in str(e).lower():
+            error_message = f'<div style="color: red; padding: 10px;">OpenAI API error: {str(e)}<br><br>Please check your OpenAI API key and account status.</div>'
+        
         return history + [(message, error_message)]
 
 # Legacy main function for backward compatibility
@@ -764,7 +799,108 @@ def display_content(content):
     # Continue with the rest of the display logic
     return content
 
+# Function to debug Pinecone connection and data
+def debug_pinecone():
+    """
+    Debug utility to verify Pinecone connection and data.
+    """
+    print("=== Starting Pinecone Debug ===")
+    
+    # Check environment variables
+    pinecone_api_key = os.getenv('PINECONE_API_KEY')
+    pinecone_environment = os.getenv('PINECONE_ENVIRONMENT') 
+    pinecone_index_name = os.getenv('PINECONE_INDEX_NAME', 'default-index')
+    
+    print(f"Environment Variables:")
+    print(f"- PINECONE_API_KEY: {'Set' if pinecone_api_key else 'Missing'}")
+    print(f"- PINECONE_ENVIRONMENT: {'Set: ' + pinecone_environment if pinecone_environment else 'Missing'}")
+    print(f"- PINECONE_INDEX_NAME: {pinecone_index_name}")
+    
+    if not pinecone_api_key or not pinecone_environment:
+        print("ERROR: Missing required environment variables. Please check your .env file.")
+        return False
+    
+    # Initialize Pinecone and get index
+    try:
+        from utils.pinecone_logic import get_pinecone_index, verify_pinecone_upsert
+        index, index_created = get_pinecone_index(pinecone_index_name)
+        
+        if index is None:
+            print("ERROR: Failed to initialize Pinecone index.")
+            return False
+            
+        print(f"Successfully connected to Pinecone index '{pinecone_index_name}'")
+        print(f"Index was {'created during this session' if index_created else 'already existing'}")
+        
+        # Check index stats
+        try:
+            stats = index.describe_index_stats()
+            if not stats:
+                print("ERROR: Could not retrieve index stats.")
+                return False
+                
+            print("\nIndex Stats:")
+            print(json.dumps(stats, indent=2))
+            
+            if 'total_vector_count' in stats:
+                vector_count = stats['total_vector_count']
+                if vector_count <= 0:
+                    print("\nWARNING: Index exists but contains no vectors.")
+                    print("You need to populate your database by running the update_database script.")
+                    return False
+                else:
+                    print(f"\nIndex contains {vector_count} vectors.")
+            else:
+                print("\nWARNING: Index stats does not contain vector count information.")
+        except Exception as e:
+            print(f"ERROR checking index stats: {str(e)}")
+            return False
+            
+        # Test query
+        print("\nTesting a sample query...")
+        try:
+            # Generate embedding for a simple test query
+            from utils.openai_logic import get_embeddings
+            
+            test_query = "test query"
+            print(f"Using test query: '{test_query}'")
+            
+            embedding_response = get_embeddings(test_query, "text-embedding-ada-002")
+            query_embedding = embedding_response.data[0].embedding
+            
+            # Query Pinecone
+            results = index.query(
+                vector=query_embedding,
+                top_k=1,
+                include_metadata=True
+            )
+            
+            print("Query results:")
+            print(json.dumps(results, indent=2))
+            
+            if 'matches' in results and len(results['matches']) > 0:
+                print(f"Query successful: {len(results['matches'])} matches found.")
+                return True
+            else:
+                print("WARNING: Query returned no matches. This could be expected if your database doesn't contain relevant data.")
+                return True  # Still return true as the connection works
+        except Exception as e:
+            print(f"ERROR during test query: {str(e)}")
+            return False
+            
+    except Exception as e:
+        print(f"ERROR initializing Pinecone: {str(e)}")
+        return False
+        
+    print("=== Pinecone Debug Complete ===")
+    return True
+
 if __name__ == "__main__":
+    # Add debug option via command line
+    if len(sys.argv) > 1 and sys.argv[1] == '--debug-pinecone':
+        debug_pinecone()
+        sys.exit(0)
+        
     # Create a custom light theme for Gradio
     light_theme = gr.themes.Default(
         primary_hue="gray",

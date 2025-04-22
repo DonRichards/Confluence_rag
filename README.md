@@ -43,10 +43,50 @@ Create a `.env` file in the root directory of the project to store your API keys
 ```plaintext
 OPENAI_API_KEY=<your_openai_api_key>
 PINECONE_API_KEY=<your_pinecone_api_key>
+PINECONE_ENVIRONMENT=<your_pinecone_environment>
+PINECONE_INDEX_NAME=<your_pinecone_index_name>
 CONFLUENCE_DOMAIN=<your_confluence_domain>
 USERNAME=<your_username>
 PASSWORD=<your_password>
 ```
+
+## Managing the Vector Database
+
+### Initializing or Updating the Vector Database
+
+Before using the application, you need to populate the Pinecone vector database with your data. Use the `update_database.py` script to import, process, and upload your data to Pinecone:
+
+```bash
+pipenv run python update_database.py --csv-file=data/kb.csv
+```
+
+### Reset and Recreate the Vector Database
+
+If you need to reset the database and start fresh (e.g., after changing your data or schema):
+
+```bash
+pipenv run python update_database.py --reset --csv-file=data/kb.csv
+```
+
+The `--reset` flag will delete the existing index before creating a new one and importing data.
+
+### Verify Database Status
+
+To check if your database is properly set up without making any changes:
+
+```bash
+pipenv run python update_database.py --verify-only
+```
+
+### Troubleshooting Vector Database Issues
+
+If you encounter issues with the Pinecone database, you can run a diagnostic check:
+
+```bash
+pipenv run python app_pinecone_openai.py --debug-pinecone
+```
+
+This will verify your connection to Pinecone, check the index stats, and run a test query to ensure everything is working properly.
 
 ## Running the Applications
 
