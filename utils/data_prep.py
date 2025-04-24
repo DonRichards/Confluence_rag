@@ -4,6 +4,8 @@ from tqdm.auto import tqdm
 from utils.openai_logic import create_embeddings
 import os, sys
 from .auth import get_confluence_client
+import re
+import urllib.parse
 
 # Function to get dataset
 def import_csv(df, csv_file, max_rows=None):
@@ -89,11 +91,22 @@ def clean_data_pinecone_schema(df):
     if df is None:
         return "Error: No data was loaded from either Confluence or CSV"
     
+    # Add detailed debugging of input dataframe
+    print(f"Input DataFrame shape: {df.shape}")
+    print(f"Input DataFrame columns: {df.columns.tolist()}")
+    
+    # Load spaces configuration from environment variable
+    configured_spaces = os.getenv('SPACES', '').split(',')
+    configured_spaces = [space.strip() for space in configured_spaces if space.strip()]
+    print(f"Configured spaces from environment: {configured_spaces}")
+    
     # Update to check for either 'tiny_link' or 'url' column
     if 'tiny_link' in df.columns:
         link_column = 'tiny_link'
+        print(f"Using 'tiny_link' column for URLs")
     elif 'url' in df.columns:
         link_column = 'url'
+        print(f"Using 'url' column for URLs")
     else:
         # If neither 'tiny_link' nor 'url' is present
         return "Error: CSV file is missing required link column: either 'tiny_link' or 'url' must be present"
@@ -103,6 +116,14 @@ def clean_data_pinecone_schema(df):
     if not required_columns.issubset(df.columns):
         missing_columns = required_columns - set(df.columns)
         return f"Error: CSV file is missing required columns: {missing_columns}"
+    
+    # Check if space column exists
+    space_column_exists = 'space' in df.columns
+    if not space_column_exists:
+        print("Warning: 'space' column not found. Will extract space keys from URLs or use configured spaces.")
+    else:
+        space_counts = df['space'].value_counts().to_dict()
+        print(f"Found existing 'space' column with values: {space_counts}")
     
     # Filter out rows where 'content' is empty
     df_filtered = df[df['content'].notna() & (df['content'] != '')].copy()
@@ -115,6 +136,108 @@ def clean_data_pinecone_schema(df):
     
     # Rename the link column to 'source'
     df_filtered.rename(columns={link_column: 'source'}, inplace=True)
+    
+    # If space column doesn't exist, create it with default value
+    if not space_column_exists:
+        df_filtered['space'] = 'default-index'
+    
+    # Extract space key from URL whether space column exists or not
+    # This ensures we always use the space key, not the space name
+    if 'source' in df_filtered.columns:
+        # Print sample URLs for debugging
+        print("\nSample URLs for space key extraction:")
+        for i, url in enumerate(df_filtered['source'].head(10).tolist()):
+            print(f"  URL {i}: {url}")
+        
+        # Try to extract space from Confluence URL
+        try:
+            def extract_space_key_from_url(url):
+                # First, convert to string if not already
+                if not isinstance(url, str):
+                    url = str(url)
+                
+                # Get configured spaces from environment
+                configured_spaces = os.getenv('SPACES', '').split(',')
+                configured_spaces = [space.strip() for space in configured_spaces if space.strip()]
+                
+                # Print the URL for debugging first 100 chars
+                url_preview = url[:100] + ("..." if len(url) > 100 else "")
+                
+                # Various patterns for Confluence URLs
+                # 1. Standard spaces pattern: /spaces/SPACEKEY/
+                spaces_pattern = r'/spaces/([^/]+)'
+                
+                # 2. SpaceKey parameter: spaceKey=SPACEKEY
+                space_key_param = r'spaceKey=([^&]+)'
+                
+                # 3. Wiki URL with space in path: /display/SPACEKEY/
+                wiki_pattern = r'/display/([^/]+)'
+                
+                # 4. Space in path component: /space/SPACEKEY/
+                space_pattern = r'/space/([^/]+)'
+                
+                # 5. Direct space prefix: space=SPACEKEY
+                direct_space = r'space=([^&\s]+)'
+                
+                # Try all patterns in order
+                patterns = [
+                    (spaces_pattern, "spaces pattern"),
+                    (space_key_param, "spaceKey parameter"),
+                    (wiki_pattern, "wiki pattern"),
+                    (space_pattern, "space pattern"),
+                    (direct_space, "direct space")
+                ]
+                
+                extracted_space = None
+                
+                for pattern, pattern_name in patterns:
+                    match = re.search(pattern, url)
+                    if match:
+                        space_key = match.group(1)
+                        # In case the URL has encoded characters
+                        space_key = urllib.parse.unquote(space_key)
+                        # Only use the space key if it's in configured spaces
+                        if space_key in configured_spaces:
+                            print(f"  Matched {pattern_name}: {space_key} from {url_preview}")
+                            extracted_space = space_key
+                            break
+                        else:
+                            print(f"  Found space key {space_key} but it's not in configured spaces, skipping")
+                
+                # Remove the subdomain extraction fallback completely
+                
+                return extracted_space or 'default-index'  # Return 'default-index' if no valid space found
+            
+            # Apply extraction to URLs with verbose debugging
+            print("\nExtracting space keys from URLs:")
+            space_keys = []
+            for i, row in df_filtered.head(10).iterrows():
+                url = row['source']
+                space_key = extract_space_key_from_url(url)
+                space_keys.append(space_key)
+                print(f"  Row {i} - URL: {url} -> Space key: {space_key}")
+            
+            # Apply to full dataset
+            df_filtered['space'] = df_filtered['source'].apply(extract_space_key_from_url)
+            unique_spaces = set(df_filtered['space'].tolist())
+            space_counts = df_filtered['space'].value_counts().to_dict()
+            
+            print(f"\nExtracted {len(unique_spaces)} unique space keys from URLs")
+            print(f"Space key counts: {space_counts}")
+            print(f"Space keys found: {', '.join(list(unique_spaces)[:10])}" + 
+                  (f"... and {len(unique_spaces) - 10} more" if len(unique_spaces) > 10 else ""))
+            
+        except Exception as e:
+            print(f"Error extracting spaces from URLs: {e}")
+            import traceback
+            traceback.print_exc()
+            # If extraction fails but we have configured spaces, use the first one
+            if configured_spaces:
+                print(f"Using first configured space as fallback: {configured_spaces[0]}")
+                df_filtered['space'] = configured_spaces[0]
+            else:
+                # Otherwise default
+                df_filtered['space'] = 'default-index'
     
     # Limit content size to avoid exceeding Pinecone's metadata size limit (40KB)
     # A safe limit would be around 30KB to account for other metadata
@@ -132,7 +255,7 @@ def clean_data_pinecone_schema(df):
     # Create metadata JSON
     import json
     df_filtered['metadata'] = df_filtered.apply(
-        lambda row: json.dumps({'source': row['source'], 'text': row['content']}), 
+        lambda row: json.dumps({'source': row['source'], 'text': row['content'], 'space': row['space']}), 
         axis=1
     )
     
@@ -164,7 +287,7 @@ def clean_data_pinecone_schema(df):
                 return json.dumps(metadata)
             except Exception as e:
                 print(f"Error processing row {row_id}: {e}")
-                return json.dumps({'source': 'error', 'text': 'Error processing content'})
+                return json.dumps({'source': 'error', 'text': 'Error processing content', 'space': 'default-index'})
         
         df_filtered['metadata'] = df_filtered.apply(
             lambda row: ensure_size_limit(row['metadata'], row['id']), 
@@ -175,8 +298,12 @@ def clean_data_pinecone_schema(df):
     if 'metadata_size' in df_filtered.columns:
         df_filtered = df_filtered.drop(columns=['metadata_size'])
     
-    # Keep only the essential columns for Pinecone
-    result_df = df_filtered[['id', 'metadata']].copy()
+    # Keep the essential columns for Pinecone, including space for namespace
+    result_df = df_filtered[['id', 'metadata', 'space']].copy()
+    
+    # Get a count of records per space for reporting
+    spaces_count = result_df['space'].value_counts().to_dict()
+    print(f"Records by space: {spaces_count}")
     
     print("Done: Dataset retrieved")
     return result_df
@@ -199,6 +326,12 @@ def generate_embeddings_and_add_to_df(df, model_for_openai_embedding):
     if 'metadata' not in df.columns:
         print("Error: DataFrame is missing 'metadata' column")
         return None
+    
+    # Store columns we want to preserve
+    preserve_columns = ['id', 'metadata']
+    if 'space' in df.columns:
+        preserve_columns.append('space')
+        print(f"Will preserve 'space' column with {df['space'].nunique()} unique values")
     
     print("Start: Generating embeddings and adding to DataFrame")
     
@@ -238,7 +371,7 @@ def generate_embeddings_and_add_to_df(df, model_for_openai_embedding):
             # Only log truncation if it's significant 
             if original_length > 1.5 * safe_token_limit * 4:
                 print(f"Warning: Text for row {index} was truncated from {original_length} to {len(text)} chars")
-
+            
         # Try embedding with progressive truncation if needed
         success = False
         retry_count = 0
@@ -284,11 +417,26 @@ def generate_embeddings_and_add_to_df(df, model_for_openai_embedding):
             print(f"Failed to generate embedding for row {index} after {retry_count} retries")
             failed_rows.append(index)
 
+    # Print before drop
+    print(f"DataFrame before dropping failed rows: {df.shape}")
+    print(f"Columns before drop: {df.columns.tolist()}")
+    
     # Remove rows with None values for 'values' column before returning
     original_count = df.shape[0]
     df = df.dropna(subset=['values'])
     final_count = df.shape[0]
     dropped_count = original_count - final_count
+    
+    # Ensure we preserved all important columns
+    print(f"Columns after drop: {df.columns.tolist()}")
+    for col in preserve_columns:
+        if col not in df.columns:
+            print(f"WARNING: {col} column was lost during processing!")
+    
+    # Debug space column if it exists
+    if 'space' in df.columns:
+        space_counts = df['space'].value_counts().to_dict()
+        print(f"Space column values after processing: {space_counts}")
     
     # Print summary statistics
     print("\nEmbedding Generation Summary:")

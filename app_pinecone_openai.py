@@ -4,7 +4,7 @@ import pandas as pd
 from dotenv import load_dotenv, find_dotenv
 import gradio as gr
 import html
-from utils.pinecone_logic import delete_pinecone_index, get_pinecone_index, upsert_data
+from utils.pinecone_logic import delete_pinecone_index, get_pinecone_index, upsert_data, init_pinecone, query_pinecone
 from utils.data_prep import import_csv, clean_data_pinecone_schema, generate_embeddings_and_add_to_df
 from utils.openai_logic import get_embeddings, create_prompt, add_prompt_messages, get_chat_completion_messages, create_system_prompt
 from utils.auth import get_confluence_client
@@ -13,6 +13,8 @@ import time
 import json
 from datetime import datetime
 import logging
+from openai import OpenAI
+from gradio import HTML
 
 # load environment variables
 load_dotenv(find_dotenv())
@@ -506,123 +508,71 @@ def process_message(message, history):
     
     return None
 
-# Function to initialize Pinecone
-def init_pinecone():
-    print("Start: Initializing Pinecone")
+# Function to generate a response using OpenAI
+def generate_response(query, query_results):
+    """Generate a response based on a query and the retrieved documents."""
     try:
-        # Get Pinecone API key from environment variables
-        pinecone_api_key = os.getenv('PINECONE_API_KEY')
-        if not pinecone_api_key:
-            print("Error: PINECONE_API_KEY not found in environment variables")
-            return None
+        # Get OpenAI API key
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            logging.error("OpenAI API key not found")
+            return "Error: OpenAI API key not found"
             
-        # Get Pinecone environment from environment variables
-        pinecone_environment = os.getenv('PINECONE_ENVIRONMENT')
-        if not pinecone_environment:
-            print("Error: PINECONE_ENVIRONMENT not found in environment variables")
-            return None
-            
-        # Initialize Pinecone
-        index_name = os.getenv('PINECONE_INDEX_NAME', 'default-index')
-        index, _ = get_pinecone_index(index_name)
+        client = OpenAI(api_key=openai_api_key)
         
-        # Verify the index has data
-        try:
-            stats = index.describe_index_stats()
-            if not stats or 'total_vector_count' not in stats:
-                print("Warning: Could not retrieve index stats")
-            else:
-                vector_count = stats['total_vector_count']
-                if vector_count <= 0:
-                    print(f"Warning: Index contains no vectors. Database is empty and needs to be populated.")
-                else:
-                    print(f"Index contains {vector_count} vectors. Database is ready for queries.")
-        except Exception as e:
-            print(f"Warning: Could not verify index data: {e}")
+        # Prepare context from documents
+        context = ""
+        if query_results:
+            for i, (source_url, text_content, score) in enumerate(query_results, 1):
+                if text_content:
+                    context += f"Document {i} (Score: {score:.2f}):\n"
+                    context += f"Source: {source_url}\n"
+                    context += f"Content: {text_content}\n\n"
         
-        print("Done: Pinecone initialized successfully")
-        return index
-    except Exception as e:
-        print(f"Error initializing Pinecone: {str(e)}")
-        return None
-
-# Function to query Pinecone
-def query_pinecone(index, query):
-    print(f"Start: Querying Pinecone with: {query}")
-    try:
-        # Generate embedding for the query
-        embedding_response = get_embeddings(query, "text-embedding-ada-002")
-        query_embedding = embedding_response.data[0].embedding
+        # Create system message
+        system_message = """You are a knowledgeable AI assistant that provides helpful and accurate information based on the available context.
+If the information isn't in the provided context, admit that you don't know rather than making up an answer.
+When answering, cite the source URLs from the context when appropriate.
+Be concise and focus on directly answering the user's query."""
         
-        # Query Pinecone
-        results = index.query(
-            vector=query_embedding,
-            top_k=5,
-            include_metadata=True
+        # Format messages for OpenAI API
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": f"Given the following context:\n\n{context}\n\nQuestion: {query}"}
+        ]
+        
+        # Call OpenAI API to generate response
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1000
         )
         
-        # Extract information from results
-        extracted_info = extract_info(results)
-        
-        print("Done: Pinecone query completed")
-        return extracted_info
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"Error querying Pinecone: {str(e)}")
-        return []
-
-# Function to generate response with OpenAI
-def generate_answer(query, context_data, chat_history=[]):
-    try:
-        # Create system prompt
-        system_prompt = create_system_prompt()
-        
-        # Create chat messages
-        messages = []
-        messages = add_prompt_messages("system", system_prompt, messages)
-        
-        # Add chat history for context (up to 5 past exchanges)
-        history_context = ""
-        recent_history = chat_history[-5:] if len(chat_history) > 5 else chat_history
-        if recent_history:
-            history_context = "Previous conversation:\n"
-            for h_user, h_bot in recent_history:
-                history_context += f"User: {h_user}\nAssistant: {h_bot}\n\n"
-        
-        # Create context string from retrieved data
-        search_context = ""
-        for i, (source, text, score) in enumerate(context_data, 1):
-            # Add some of the text as context (trim if too long)
-            content_preview = text[:1500] + "..." if len(text) > 1500 else text
-            search_context += f"Source {i} ({source}):\n{content_preview}\n\n"
-        
-        # Create the prompt with context
-        prompt = f"Based on the following information, please answer the question. If referencing specific sources, mention them in your answer.\n\n"
-        
-        if history_context:
-            prompt += f"{history_context}\n"
-            
-        prompt += f"Search results:\n{search_context}\n\nCurrent question: {query}\n\nAnswer:"
-        messages = add_prompt_messages("user", prompt, messages)
-        
-        # Get response from OpenAI
-        response = get_chat_completion_messages(messages, "gpt-3.5-turbo", temperature=0.3)
-        
-        return response
-    except Exception as e:
-        print(f"Error generating answer: {str(e)}")
-        return f"Error generating answer: {str(e)}"
+        logging.error(f"Error generating response: {str(e)}")
+        return f"Error generating response: {str(e)}"
 
 # Function to log conversation
-def log_conversation(user_input, assistant_response, session_id, results=None):
+def log_conversation(user_input, assistant_response, session_id, history=None, results=None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Get the full conversation history
     conversation_history = []
-    for user_msg, bot_msg in current_history:
-        conversation_history.append({
-            "user": user_msg,
-            "assistant": bot_msg
-        })
+    if history:
+        for user_msg, bot_msg in history:
+            conversation_history.append({
+                "user": user_msg,
+                "assistant": bot_msg
+            })
+    else:
+        # Fallback to global current_history
+        for user_msg, bot_msg in current_history:
+            conversation_history.append({
+                "user": user_msg,
+                "assistant": bot_msg
+            })
     
     log_entry = {
         "timestamp": timestamp,
@@ -660,132 +610,198 @@ def fork_conversation(message, history, selected_message):
     for i, (user_msg, _) in enumerate(history):
         if user_msg == selected_message:
             # Truncate history to the selected message
-            history = history[:i]
+            new_history = history[:i+1]
             # Add the new message
-            history.append((message, ""))
-            current_history = history.copy()
-            return history
+            if message:
+                # Process the new message with the truncated history
+                result = chat_function(message, new_history)
+                current_history = result
+                return result
+            return new_history
     
     return history
 
 # Main chat function for Gradio
-def chat_function(message, history):
-    try:
-        # Process the message and get response
-        special_response = process_message(message, history)
+def chat_function(message, history=None):
+    global current_history
+    
+    if history is None:
+        history = []
+    
+    # Update current_history with the latest history
+    current_history = history.copy() if history else []
         
+    try:
+        # Check if user is trying to filter by space
+        filter_by_space = None
+        original_message = message
+        
+        # Process special commands first
+        special_response = process_message(message, history)
         if special_response:
-            # Return the message and response in the format Gradio expects
-            return history + [(message, special_response)]
-            
-        # Initialize Pinecone
+            updated_history = history + [(message, special_response)]
+            current_history = updated_history.copy()
+            return updated_history
+        
+        # Check for space filtering command patterns
+        space_filter_patterns = [
+            "search in space:", 
+            "filter by space:", 
+            "space:", 
+            "namespace:"
+        ]
+        
+        for pattern in space_filter_patterns:
+            if message.lower().startswith(pattern):
+                # Extract space name and query
+                parts = message[len(pattern):].strip().split(" ", 1)
+                if len(parts) == 2:
+                    filter_by_space = parts[0].strip()
+                    message = parts[1].strip()
+                    print(f"Detected space filter: '{filter_by_space}' with query: '{message}'")
+                else:
+                    updated_history = history + [(original_message, f"Please provide a query after specifying the space. Example: '{pattern} SpaceKey your query here'")]
+                    current_history = updated_history.copy()
+                    return updated_history
+        
+        print(f"Processing message: {message}")
+        
+        # Initialize Pinecone connection
         index = init_pinecone()
         if not index:
-            return history + [(message, "Sorry, I couldn't connect to the knowledge base. Please check that your Pinecone API key and environment variables are set correctly.")]
-            
-        # Verify the index has data
+            updated_history = history + [(original_message, "Failed to connect to the vector database. Please check your configuration.")]
+            current_history = updated_history.copy()
+            return updated_history
+        
+        # Check if index contains data
         try:
             stats = index.describe_index_stats()
-            if stats and 'total_vector_count' in stats and stats['total_vector_count'] <= 0:
-                error_message = (
-                    "Your Pinecone database is empty. No vectors have been added yet. "
-                    "Please run the update_database.py script to populate your database with data. "
-                    "You can do this by running: python update_database.py --csv-file=your_data.csv"
-                )
-                return history + [(message, error_message)]
+            total_vector_count = stats.total_vector_count if hasattr(stats, 'total_vector_count') else stats.get('total_vector_count', 0)
+            
+            if total_vector_count == 0:
+                updated_history = history + [(original_message, "The database is empty. Please add some documents first.")]
+                current_history = updated_history.copy()
+                return updated_history
+                
+            # Get available namespaces
+            namespaces = []
+            if hasattr(stats, 'namespaces'):
+                namespaces = list(stats.namespaces.keys())
+            elif 'namespaces' in stats:
+                namespaces = list(stats.get('namespaces', {}).keys())
+                
+            if namespaces:
+                print(f"Available namespaces: {namespaces}")
         except Exception as e:
             print(f"Error checking index stats: {str(e)}")
-            # Continue execution since this is just a warning
             
-        # Query Pinecone
-        results = query_pinecone(index, message)
-        if not results:
-            return history + [(message, "I couldn't find any relevant information. This could mean your question is outside the scope of the knowledge base, or the knowledge base doesn't contain the necessary data. Please try rephrasing your question or updating the database with more relevant content.")]
-            
-        # Generate answer with OpenAI
-        answer = generate_answer(message, results, history)
-        if not answer:
-            return history + [(message, "I couldn't generate an answer. Please try again or check the OpenAI API key.")]
+        # Query Pinecone for relevant information
+        query_results = query_pinecone(index, message, filter_by_space=filter_by_space)
         
-        # --- ORIGINAL CODE (Restored) ---
-        # Create session ID for this specific interaction
-        session_id_str = datetime.now().strftime("%Y%m%d%H%M%S")
-
-        # Format the response with proper HTML structure
-        formatted_response = f"""
-        <div class="chat-response">
-            <div class="question-banner">
-                {message}
-            </div>
-            <div class="answer-content">
-                {html.escape(answer)}
-            </div>
+        if not query_results:
+            # If filtering by space caused no results, give specific feedback
+            if filter_by_space:
+                spaces_info = f"Available spaces: {', '.join(namespaces)}" if namespaces else ""
+                error_message = f"""No results found when filtering by space key '{filter_by_space}'. {spaces_info}
+                    <br><br>Try:
+                    <ul>
+                        <li>Searching without a space filter</li>
+                        <li>Using a different space key</li>
+                        <li>Rephrasing your query</li>
+                    </ul>"""
+                updated_history = history + [(original_message, error_message)]
+                current_history = updated_history.copy()
+                return updated_history
             
-            <div class="sources-section">
-                <p class="sources-header">Sources:</p>
-                <ul class="sources-list">
-        """
-
-        # Add sources with similarity scores
-        # Handle case where results might be empty or not contain expected data
-        if results:
-            for idx, (source, _, score) in enumerate(results, 1):
-                if source and score is not None:
-                    similarity_percentage = score * 100
-                    # Ensure closing </li> tag for valid HTML
-                    formatted_response += f"""
-                            <li>Source {idx}: <a href="{source}" class="source-link" target="_blank">{source}</a>
-                            <span class="similarity-score">[Similarity: {similarity_percentage:.2f}%]</span></li> 
-                    """
+            # Generic no results message
+            error_message = """I couldn't find any relevant information for your query. 
+                <br><br>Try:
+                <ul>
+                    <li>Rephrasing your question</li>
+                    <li>Using more specific keywords</li>
+                    <li>Check if the information exists in your database</li>
+                </ul>"""
+            updated_history = history + [(original_message, error_message)]
+            current_history = updated_history.copy()
+            return updated_history
+        
+        # Generate response with OpenAI
+        response = generate_response(message, query_results)
+        
+        if not response:
+            return "Failed to generate a response. Please try again."
+        
+        # Format sources for display
+        formatted_sources = "<div class='sources-section'>"
+        formatted_sources += "<h4>Sources:</h4><ul>"
+        
+        # Get namespaces information for display
+        for i, (source, _, score) in enumerate(query_results):
+            # Extract namespace/space key information from the source URL
+            namespace = "default"
+            
+            # Try to extract space key from URL
+            try:
+                import re
+                # Extract space key from Confluence URL pattern
+                space_match = re.search(r'/spaces/([^/]+)', source)
+                if space_match:
+                    namespace = space_match.group(1)
                 else:
-                    formatted_response += "<li>Invalid source data</li>" # Removed invalid {idx}
-        else:
-            formatted_response += "<li>No sources found.</li>"
-
-        formatted_response += f"""
-                </ul>
-            </div>
+                    # Try alternative pattern with spaceKey parameter
+                    space_key_match = re.search(r'spaceKey=([^&]+)', source)
+                    if space_key_match:
+                        namespace = space_key_match.group(1)
+            except:
+                pass
             
-            <div class="session-info">
-                Session ID: {session_id_str}
+            # Add source entry with similarity score and namespace
+            similarity_percentage = int(score * 100)
+            formatted_sources += f"<li><strong>Source {i+1}</strong> [Space Key: <em>{namespace}</em>] - <a href='{source}' target='_blank'>{source}</a> (Similarity: {similarity_percentage}%)</li>"
+        
+        formatted_sources += "</ul></div>"
+        
+        # Add tips about space filtering if multiple namespaces exist
+        space_filtering_tip = ""
+        if namespaces and len(namespaces) > 1:
+            spaces_list = ", ".join(namespaces)
+            space_filtering_tip = f"""
+            <div class='tip-section'>
+                <p><strong>Tip:</strong> You can filter results by space key using: "search in space: [space_key] [your query]"</p>
+                <p>Available space keys: {spaces_list}</p>
             </div>
-            
-            <div class="instruction-text">
-                To view the full content of any page, type "show content" followed by the reference number.
-            </div>
+            """
+        
+        # Final response with sources and optional tip
+        final_response = f"""
+        <div class='chat-response'>
+            <div class='response-content'>{response}</div>
+            {formatted_sources}
+            {space_filtering_tip}
         </div>
         """
-        # Validate the HTML response
-
-        try:
-            soup = BeautifulSoup(formatted_response, 'html.parser')
-            formatted_response = str(soup)
-        except Exception as e:
-            logging.error(f"Error validating HTML response: {str(e)}")
-        # Log the conversation
-        log_conversation(message, formatted_response, session_id_str, results)
-
-        # Return None for the user message part to avoid duplication
-        return history + [(None, formatted_response)]
-
+        
+        # Update history with the new message pair and return
+        updated_history = history + [(message, final_response)]
+        current_history = updated_history.copy()
+        return updated_history
+        
     except Exception as e:
-        logging.error(f"Error in chat function: {str(e)}")
-        # Return a user-friendly error message in the chat history format
-        error_message = f'<div style="color: red; padding: 10px;">An error occurred: {str(e)}</div>'
+        error_message = f"Error processing your request: {str(e)}"
+        print(error_message)
+        import traceback
+        traceback.print_exc()
         
-        # Provide more helpful message for specific error types
-        if "pinecone" in str(e).lower():
-            error_message = f'<div style="color: red; padding: 10px;">Pinecone error: {str(e)}<br><br>To troubleshoot, run: python app_pinecone_openai.py --debug-pinecone</div>'
-        elif "openai" in str(e).lower():
-            error_message = f'<div style="color: red; padding: 10px;">OpenAI API error: {str(e)}<br><br>Please check your OpenAI API key and account status.</div>'
-        
-        return history + [(message, error_message)]
+        # Return error message in the correct format for the chatbot
+        updated_history = history + [(message, f"I encountered an error while processing your request. Please try again or contact support if the issue persists. Error details: {str(e)}")]
+        current_history = updated_history.copy()
+        return updated_history
 
 # Legacy main function for backward compatibility
 def main(query):
     # Create mock history for single query usage
     history = []
-    response = chat_function(query, history)
+    response = chat_function(query)
     return response
 
 def display_content(content):
@@ -894,6 +910,74 @@ def debug_pinecone():
         
     print("=== Pinecone Debug Complete ===")
     return True
+
+# Creating the RAG application
+def create_rag_app():
+    """Create and configure the RAG application."""
+    # Initialize Pinecone
+    init_pinecone()
+    
+    # Create the application interface
+    with gr.Blocks(title="RAG Demo with Pinecone and OpenAI") as app:
+        gr.Markdown("# RAG Demo with Pinecone and OpenAI")
+        gr.Markdown("Ask questions about the documents stored in your Pinecone index.")
+        
+        with gr.Row():
+            with gr.Column(scale=4):
+                query_input = gr.Textbox(
+                    label="Enter your question",
+                    placeholder="What would you like to know?",
+                    lines=1
+                )
+                submit_btn = gr.Button("Submit", variant="primary")
+                
+        with gr.Row():
+            with gr.Column(scale=3):
+                answer_output = gr.Markdown(label="Answer", value="")
+            with gr.Column(scale=2):
+                sources_output = gr.JSON(label="Retrieved Documents", value={})
+                
+        def process_query(query):
+            """Process a user query and return an answer with sources."""
+            try:
+                # Log the query
+                logging.info(f"Processing query: {query}")
+                
+                # Query Pinecone for relevant documents
+                query_results = query_pinecone(query, top_k=5)
+                
+                # Format sources for display
+                sources_display = []
+                for i, (source, content, score) in enumerate(query_results, 1):
+                    sources_display.append({
+                        "rank": i,
+                        "source": source,
+                        "score": float(score),
+                        "snippet": content[:150] + "..." if len(content) > 150 else content
+                    })
+                
+                # Generate response
+                response = generate_response(query, query_results)
+                
+                return response, sources_display
+            except Exception as e:
+                logging.error(f"Error processing query: {str(e)}")
+                return f"Error: {str(e)}", []
+        
+        # Set up the event handler for query submission
+        submit_btn.click(
+            fn=process_query,
+            inputs=[query_input],
+            outputs=[answer_output, sources_output]
+        )
+        
+        query_input.submit(
+            fn=process_query,
+            inputs=[query_input],
+            outputs=[answer_output, sources_output]
+        )
+        
+    return app
 
 if __name__ == "__main__":
     # Add debug option via command line

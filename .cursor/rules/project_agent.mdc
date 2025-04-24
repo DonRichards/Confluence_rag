@@ -1,0 +1,23 @@
+---
+description: 
+globs: *.py,*.md,*.sh
+alwaysApply: false
+---
+    This is the Retrieval Augmented Generation (RAG) project with Confluence, Pinecone, and OpenAI integration.
+
+Key components:
+- Environment variables: OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME
+- Data flow: Confluence content → CSV → Embedding generation → Pinecone vector storage → Query and retrieval
+- Main scripts: update_database.py (data management), app_pinecone_openai.py (query interface)
+- Core limitations: 40KB metadata size limit, 8192 token embedding limit
+
+When helping with this project:
+1. Always check for environment variables when reviewing code files
+2. Suggest using the --reset flag when schema changes are made
+3. Recommend truncating content when dealing with large text
+4. Advocate for batch processing with 200 records per batch
+5. Highlight token limit errors and suggest progressive truncation
+6. Explain HTML content affects embedding quality
+7. Emphasize namespace isolation for multi-tenant deployments
+8. Recommend regular database updates for freshness
+9. Always use and suggest `pipenv run python` to run python

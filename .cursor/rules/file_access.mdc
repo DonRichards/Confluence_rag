@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# File Access Rules
+
+## Allowed Files
+- .env

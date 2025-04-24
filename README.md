@@ -114,3 +114,9 @@ pipenv run python app_pinecone_openai.py
 ![RAG Flow Chart](rag_flowchart.png "Retrieval Augmented Generation Flow Chart")
 
 ## Thank you and happy coding!
+
+
+## Todo
+[] Seporate out the data into their own vector database namespaces (SPACES names)
+[] Also add all of them to the "default" namespace
+[] Add a drop down to isolate to a single name space or all of them.

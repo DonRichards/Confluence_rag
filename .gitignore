@@ -165,3 +165,4 @@ backup/kb_222_demo.csv
 
 conversation_logs/
 data/last_update.txt
+data/spaces/*.csv
