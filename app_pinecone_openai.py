@@ -568,11 +568,11 @@ def log_conversation(user_input, assistant_response, session_id, history=None, r
             })
     else:
         # Fallback to global current_history
-        for user_msg, bot_msg in current_history:
-            conversation_history.append({
-                "user": user_msg,
-                "assistant": bot_msg
-            })
+    for user_msg, bot_msg in current_history:
+        conversation_history.append({
+            "user": user_msg,
+            "assistant": bot_msg
+        })
     
     log_entry = {
         "timestamp": timestamp,
@@ -665,7 +665,7 @@ def chat_function(message, history=None):
                     return updated_history
         
         print(f"Processing message: {message}")
-        
+            
         # Initialize Pinecone connection
         index = init_pinecone()
         if not index:
@@ -758,7 +758,7 @@ def chat_function(message, history=None):
             # Add source entry with similarity score and namespace
             similarity_percentage = int(score * 100)
             formatted_sources += f"<li><strong>Source {i+1}</strong> [Space Key: <em>{namespace}</em>] - <a href='{source}' target='_blank'>{source}</a> (Similarity: {similarity_percentage}%)</li>"
-        
+
         formatted_sources += "</ul></div>"
         
         # Add tips about space filtering if multiple namespaces exist
@@ -785,7 +785,7 @@ def chat_function(message, history=None):
         updated_history = history + [(message, final_response)]
         current_history = updated_history.copy()
         return updated_history
-        
+
     except Exception as e:
         error_message = f"Error processing your request: {str(e)}"
         print(error_message)

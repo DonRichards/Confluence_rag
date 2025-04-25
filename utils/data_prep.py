@@ -19,72 +19,112 @@ def import_csv(df, csv_file, max_rows=None):
         # Get confluence domain for building URLs
         confluence_domain = os.getenv('CONFLUENCE_DOMAIN')
         
-        # Get all spaces
-        spaces = confluence.get_all_spaces(start=0, limit=50, expand='description.plain')
+        # Get all spaces with pagination
+        all_spaces = []
+        space_start = 0
+        space_limit = 1000
+        
+        while True:
+            spaces = confluence.get_all_spaces(
+                start=space_start, 
+                limit=space_limit, 
+                expand='description.plain'
+            )
+            
+            if not isinstance(spaces, dict) or 'results' not in spaces:
+                break
+                
+            current_spaces = spaces['results']
+            if not current_spaces:
+                break
+                
+            all_spaces.extend(current_spaces)
+            print(f"Found {len(current_spaces)} more spaces (total: {len(all_spaces)})")
+            
+            if len(current_spaces) < space_limit:
+                break
+                
+            space_start += len(current_spaces)
         
         data = []
         id_counter = 1
         
-        for space in spaces['results']:
+        for space in all_spaces:
             # Skip archival or personal spaces if needed
             if space['type'] != 'global':
                 continue
                 
-            # Get pages from space
-            pages = confluence.get_all_pages_from_space(space['key'], start=0, limit=100, status='current')
+            print(f"\nProcessing space: {space['key']}")
             
-            for page in pages['results']:
-                page_content = confluence.get_page_by_id(page['id'], expand='body.storage')
-                content = page_content['body']['storage']['value']
+            # Get pages from space with pagination
+            page_start = 0
+            while True:
+                pages = confluence.get_all_pages_from_space(
+                    space['key'], 
+                    start=page_start,
+                    limit=100,  # Can increase this if needed
+                    status='current'
+                )
                 
-                data.append({
-                    'id': str(id_counter),
-                    'tiny_link': f"{confluence_domain}/pages/viewpage.action?pageId={page['id']}",
-                    'content': content
-                })
-                id_counter += 1
+                if not isinstance(pages, dict) or 'results' not in pages:
+                    current_pages = pages if isinstance(pages, list) else []
+                else:
+                    current_pages = pages['results']
+                
+                if not current_pages:
+                    break
+                    
+                print(f"Processing {len(current_pages)} pages from {space['key']} (starting at {page_start})")
+                
+                for page in current_pages:
+                    try:
+                        page_content = confluence.get_page_by_id(
+                            page['id'], 
+                            expand='body.storage'
+                        )
+                        content = page_content['body']['storage']['value']
+                        
+                        data.append({
+                            'id': str(id_counter),
+                            'tiny_link': f"{confluence_domain}/pages/viewpage.action?pageId={page['id']}",
+                            'content': content,
+                            'space_key': space['key']  # Added space key for tracking
+                        })
+                        id_counter += 1
+                        
+                        if max_rows and id_counter > max_rows:
+                            break
+                    except Exception as e:
+                        print(f"Error processing page {page['id']} in space {space['key']}: {str(e)}")
                 
                 if max_rows and id_counter > max_rows:
                     break
+                    
+                # Move to next page of results
+                page_start += len(current_pages)
+                
+                # If we got less than the limit, we've reached the end
+                if len(current_pages) < 100:
+                    break
             
-            if max_rows and id_counter > max_rows:
-                break
+            print(f"Completed space {space['key']} with {id_counter} total pages")
         
         # Convert to DataFrame
         new_df = pd.DataFrame(data)
+        print("\nFinal statistics:")
+        space_counts = new_df.groupby('space_key').size()
+        print("\nPages per space:")
+        for space_key, count in space_counts.items():
+            print(f"  {space_key}: {count} pages")
+            
         return new_df
         
     except Exception as e:
-        print(f"Error fetching from Confluence: {str(e)}")
-        print("Falling back to CSV file...")
-        
-        # Fallback to CSV if Confluence fetch fails
+        print(f"Error in import_csv: {str(e)}")
         if csv_file and os.path.exists(csv_file):
-            try:
-                if max_rows:
-                    df = pd.read_csv(csv_file, nrows=max_rows)
-                else:
-                    df = pd.read_csv(csv_file)
-                
-                # Validate required columns and check for either tiny_link or url
-                required_columns = {'id', 'content'}
-                if not required_columns.issubset(df.columns):
-                    missing_columns = required_columns - set(df.columns)
-                    print(f"Error: CSV file is missing required columns: {missing_columns}")
-                    return None
-                
-                # Check for link column (either tiny_link or url)
-                if 'tiny_link' not in df.columns and 'url' not in df.columns:
-                    print("Error: CSV file is missing a link column - either 'tiny_link' or 'url' is required")
-                    return None
-                    
-                return df
-            except Exception as e:
-                print(f"Error reading CSV file: {e}")
-                return None
-        else:
-            print(f"CSV file not found: {csv_file}")
-            return None
+            print(f"Falling back to CSV file: {csv_file}")
+            return pd.read_csv(csv_file)
+        raise
 
 def clean_data_pinecone_schema(df):
     # Check if df is None
@@ -420,7 +460,7 @@ def generate_embeddings_and_add_to_df(df, model_for_openai_embedding):
     # Print before drop
     print(f"DataFrame before dropping failed rows: {df.shape}")
     print(f"Columns before drop: {df.columns.tolist()}")
-    
+
     # Remove rows with None values for 'values' column before returning
     original_count = df.shape[0]
     df = df.dropna(subset=['values'])

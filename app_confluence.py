@@ -6,6 +6,7 @@ import pandas as pd
 import sys
 from bs4 import BeautifulSoup
 from utils.auth import get_confluence_client
+import time
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,7 +18,7 @@ confluence_api_key = os.getenv("CONFLUENCE_API_KEY")
 space_key = 'SUP'  # replace with your info
 
 # Function to fetch pages from Confluence
-def fetch_pages(start=0, limit=25):
+def fetch_pages(start=0, limit=10000):
     """Fetch pages from Confluence"""
     try:
         # Get authenticated client
@@ -28,16 +29,32 @@ def fetch_pages(start=0, limit=25):
         if not space_keys or space_keys[0] == '':
             print("No spaces specified in SPACES environment variable. Using all global spaces.")
             
-            # Get all spaces if none specified
-            print("Fetching all spaces from Confluence...")
-            spaces_response = confluence.get_all_spaces(start=0, limit=50)
+            # Get all spaces with proper pagination
+            all_spaces = []
+            space_start = 0
             
-            if isinstance(spaces_response, dict) and 'results' in spaces_response:
-                spaces = spaces_response['results']
-                print(f"Found {len(spaces)} spaces")
-            else:
-                print(f"Unexpected API response format: {spaces_response}")
-                return []
+            while True:
+                spaces_response = confluence.get_all_spaces(start=space_start, limit=limit)
+                
+                if isinstance(spaces_response, dict) and 'results' in spaces_response:
+                    current_spaces = spaces_response['results']
+                    if not current_spaces:
+                        break
+                        
+                    all_spaces.extend(current_spaces)
+                    print(f"Found {len(current_spaces)} more spaces (total: {len(all_spaces)})")
+                    
+                    # Check if we've reached the end
+                    if len(current_spaces) < limit:
+                        break
+                        
+                    space_start += len(current_spaces)
+                else:
+                    print(f"Unexpected API response format: {spaces_response}")
+                    break
+            
+            spaces = all_spaces
+            print(f"Total spaces found: {len(spaces)}")
         else:
             print(f"Using specified spaces: {', '.join(space_keys)}")
             spaces = []
@@ -639,186 +656,153 @@ def fetch_content_direct():
         space_filter = os.getenv('SPACES', '').split(',')
         space_filter = [s.strip() for s in space_filter if s.strip()]
         
-        # Start with page 0
-        start = 0
-        limit = 50
-        has_more = True
-        
-        # Keep fetching pages until there are no more
-        page_num = 1
-        while has_more and page_num <= 20:  # Limit to 20 pages for now
-            print(f"Fetching content page {page_num} (items {start} to {start+limit-1})...")
+        for space_key in space_filter:
+            print(f"\nProcessing space: {space_key}")
             
-            # Construct the URL with explicit pagination parameters
-            url = f"{confluence_domain}/rest/api/content"
-            params = {
-                'type': 'page',
-                'status': 'current',
-                'expand': 'body.storage,space,version',
-                'limit': limit,
-                'start': start
-            }
+            # First, get the total count for this space - REMOVED unreliable total count check
+            # url = f"{confluence_domain}/rest/api/space/{space_key}/content"
+            # params = {
+            #     'type': 'page',
+            #     'status': 'current',
+            #     'limit': 1  # Just get one to see the total
+            # }
             
-            # Make the API call
-            try:
-                response = requests.get(
-                    url,
-                    params=params,
-                    auth=HTTPBasicAuth(username, token)
-                )
+            # try:
+            #     response = requests.get(
+            #         url,
+            #         params=params,
+            #         auth=HTTPBasicAuth(username, token)
+            #     )
                 
-                if response.status_code != 200:
-                    print(f"Error fetching content: {response.status_code}")
-                    print(f"Response: {response.text}")
-                    break
+            #     if response.status_code != 200:
+            #         print(f"Error accessing space {space_key}: {response.status_code}")
+            #         continue
                 
-                # Parse the response
-                content_data = response.json()
+            #     data = response.json()
+            #     if 'page' not in data:
+            #         print(f"No page data found for space {space_key}")
+            #         continue
                 
-                # Process the results
-                results = content_data.get('results', [])
-                if not results:
-                    print("No more results found.")
-                    has_more = False
-                    break
-                    
-                print(f"Found {len(results)} items in page {page_num}")
+            #     # Get the total size from the response
+            #     total_size = data['page'].get('size', 0) # THIS IS UNRELIABLE
+            #     print(f"Space {space_key} has {total_size} total pages") # THIS IS UNRELIABLE
                 
-                # Process each result
-                for item in results:
-                    try:
-                        # Get space information
-                        space_key = item.get('space', {}).get('key', 'Unknown')
-                        space_name = item.get('space', {}).get('name', 'Unknown')
-                        
-                        # Skip if we're filtering by space and this space isn't in our filter
-                        if space_filter and space_key not in space_filter:
-                            continue
-                        
-                        # Track content by space
-                        if space_key not in space_content_counts:
-                            space_content_counts[space_key] = 0
-                        space_content_counts[space_key] += 1
-                        
-                        # Get the content body
-                        content = ""
-                        if 'body' in item and 'storage' in item['body']:
-                            content = item['body']['storage']['value']
-                        
-                        # Add to our content list
-                        all_content.append({
-                            'id': item['id'],
-                            'title': item['title'],
-                            'url': f"{confluence_domain}/pages/viewpage.action?pageId={item['id']}",
-                            'content': content,
-                            'space_key': space_key,
-                            'space_name': space_name,
-                            'content_type': 'page'
-                        })
-                        
-                    except Exception as e:
-                        print(f"Error processing content item {item.get('id', 'Unknown')}: {str(e)}")
-                
-                # Check if we have more results to fetch
-                if len(results) < limit:
-                    has_more = False
-                else:
-                    # Move to the next page
-                    start += limit
-                    page_num += 1
-                    
-            except Exception as e:
-                print(f"Error fetching content: {str(e)}")
-                has_more = False
-        
-        # Try using search API to find content in specific spaces
-        if space_filter and (not all_content or len(space_content_counts) < len(space_filter)):
-            print("\nTrying search API to find content in specific spaces...")
+            # Now fetch all pages with proper pagination
+            space_content_count = 0
+            start = 0
+            limit = 100  # Use max allowed limit
+            has_more = True # Add flag to control the loop
             
-            for space_key in space_filter:
-                if space_key in space_content_counts:
-                    continue  # Already have content for this space
-                    
-                print(f"Searching for content in space: {space_key}")
+            while has_more: # Loop until no more results
+                print(f"Fetching pages starting from index {start} (limit {limit})")
                 
-                # Use CQL search
-                cql = f"space = {space_key} AND type = page"
-                search_url = f"{confluence_domain}/rest/api/search"
-                search_params = {
-                    'cql': cql,
-                    'limit': 50,
-                    'expand': 'content.body.storage,content.space'
+                url = f"{confluence_domain}/rest/api/space/{space_key}/content" # Define URL inside the loop
+                batch_params = {
+                    'type': 'page',
+                    'status': 'current',
+                    'start': start,
+                    'limit': limit
                 }
                 
-                try:
-                    search_response = requests.get(
-                        search_url,
-                        params=search_params,
+                try: # Wrap the batch fetch in try/except
+                    batch_response = requests.get(
+                        url,
+                        params=batch_params,
                         auth=HTTPBasicAuth(username, token)
                     )
                     
-                    if search_response.status_code != 200:
-                        print(f"Error searching content for space {space_key}: {search_response.status_code}")
+                    if batch_response.status_code != 200:
+                        print(f"Error fetching batch: {batch_response.status_code}")
+                        if batch_response.status_code == 404:
+                             print(f"Space {space_key} not found or access denied.")
+                        else:
+                            print(f"Response: {batch_response.text}")
+                        has_more = False # Stop if error
+                        continue # Skip to next space or finish
+                    
+                    batch_data = batch_response.json()
+                    
+                    if 'page' not in batch_data or 'results' not in batch_data['page']:
+                         print("Unexpected response format, missing 'page' or 'results'.")
+                         has_more = False
+                         continue
+
+                    results = batch_data['page'].get('results', [])
+                    num_results_in_batch = len(results)
+                    
+                    if not results:
+                        print("No results in this batch, finished fetching for this space.")
+                        has_more = False # Stop if no results
                         continue
                     
-                    search_data = search_response.json()
-                    search_results = search_data.get('results', [])
+                    print(f"Processing {num_results_in_batch} pages from this batch...")
                     
-                    print(f"Found {len(search_results)} items in space {space_key} via search")
-                    
-                    for result in search_results:
+                    # Process each page
+                    for page in results:
                         try:
-                            # The content is in the content property
-                            content_item = result.get('content', {})
-                            if not content_item:
-                                continue
+                            # Get full page content
+                            page_id = page['id']
+                            content_url = f"{confluence_domain}/rest/api/content/{page_id}"
+                            content_params = {'expand': 'body.storage,version'}
+                            
+                            content_response = requests.get(
+                                content_url,
+                                params=content_params,
+                                auth=HTTPBasicAuth(username, token)
+                            )
+                            
+                            if content_response.status_code == 200:
+                                page_data = content_response.json()
+                                content = page_data.get('body', {}).get('storage', {}).get('value', '')
                                 
-                            # Get space information
-                            result_space_key = content_item.get('space', {}).get('key', 'Unknown')
-                            result_space_name = content_item.get('space', {}).get('name', 'Unknown')
-                            
-                            # Track content by space
-                            if result_space_key not in space_content_counts:
-                                space_content_counts[result_space_key] = 0
-                            space_content_counts[result_space_key] += 1
-                            
-                            # Get the content body
-                            content = ""
-                            if 'body' in content_item and 'storage' in content_item['body']:
-                                content = content_item['body']['storage']['value']
-                            
-                            # Add to our content list
-                            all_content.append({
-                                'id': content_item['id'],
-                                'title': content_item['title'],
-                                'url': f"{confluence_domain}/pages/viewpage.action?pageId={content_item['id']}",
-                                'content': content,
-                                'space_key': result_space_key,
-                                'space_name': result_space_name,
-                                'content_type': 'page'
-                            })
+                                all_content.append({
+                                    'id': page_id,
+                                    'title': page['title'],
+                                    'url': f"{confluence_domain}/pages/viewpage.action?pageId={page_id}",
+                                    'content': content,
+                                    'space_key': space_key
+                                })
+                                
+                                space_content_count += 1
+                                # Updated progress reporting
+                                print(f"Processed page {space_content_count} (ID: {page_id})", end='\\r') 
                             
                         except Exception as e:
-                            print(f"Error processing search result: {str(e)}")
+                            print(f"\\nError processing page {page.get('id', 'Unknown')}: {str(e)}")
                     
+                    print(f"\\nFinished processing batch. Total pages for space {space_key} so far: {space_content_count}") # Newline after batch
+
+                    # Check if this was the last page
+                    if num_results_in_batch < limit:
+                        print("Received fewer results than limit, assuming this is the last page.")
+                        has_more = False
+                    else:
+                        # Move to next batch
+                        start += num_results_in_batch
+                        time.sleep(0.1)  # Rate limiting protection
+
                 except Exception as e:
-                    print(f"Error searching content for space {space_key}: {str(e)}")
+                     print(f"\\nError during batch fetch for space {space_key}: {str(e)}")
+                     has_more = False # Stop on error
+
+            # Update space counts after finishing the loop for the space
+            space_content_counts[space_key] = space_content_count
+            print(f"Completed space {space_key}: {space_content_count} total pages processed.")
+                
+            # except Exception as e: # Removed outer try/except as it's handled inside the loop
+            #     print(f"Error processing space {space_key}: {str(e)}")
+            #     continue
         
-        print(f"\nFound {len(all_content)} total content items across {len(space_content_counts)} spaces")
+        # Print final statistics
+        print(f"\nFetched {len(all_content)} total pages across {len(space_content_counts)} spaces")
         print("\nContent distribution by space:")
         for space_key, count in sorted(space_content_counts.items(), key=lambda x: x[1], reverse=True):
-            print(f"  - {space_key}: {count} items")
-        
-        # If we found content from spaces that weren't in the original filter, update the filter
-        found_spaces = list(space_content_counts.keys())
-        if found_spaces:
-            print("\nSpaces with content: {', '.join(found_spaces)}")
-            update_env_spaces(found_spaces)
+            print(f"  - {space_key}: {count} pages")
         
         return all_content
         
     except Exception as e:
-        print(f"Error fetching content: {str(e)}")
+        print(f"Error in fetch_content_direct: {str(e)}")
         import traceback
         traceback.print_exc()
         return []
