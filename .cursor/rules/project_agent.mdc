@@ -9,7 +9,7 @@ Key components:
 - Environment variables: OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_ENVIRONMENT, PINECONE_INDEX_NAME
 - Data flow: Confluence content → CSV → Embedding generation → Pinecone vector storage → Query and retrieval
 - Main scripts: update_database.py (data management), app_pinecone_openai.py (query interface)
-- Core limitations: 40KB metadata size limit, 8192 token embedding limit
+- Core limitations: 40KB metadata size limit, 8192 token embedding limit (for Pinecone data)
 
 When helping with this project:
 1. Always check for environment variables when reviewing code files
@@ -21,3 +21,8 @@ When helping with this project:
 7. Emphasize namespace isolation for multi-tenant deployments
 8. Recommend regular database updates for freshness
 9. Always use and suggest `pipenv run python` to run python
+
+When designing the UI:
+1. Follow the web_resources/design_guide.md to make sure the edit follow the design guide.
+2. Use the main.css for the css values as much as possible instead of embedded the styling.
+3. There is a browser MCP that you can utilize with anything to do with the front end(gui)

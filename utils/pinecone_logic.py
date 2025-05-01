@@ -299,7 +299,7 @@ def verify_pinecone_upsert(index, query_sample=None):
         return False
 
 # Function to query Pinecone index
-def query_pinecone(index, query_text, top_k=5, filter_by_space=None):
+def query_pinecone(index, query_text, top_k=5, filter_by_space=None, similarity_threshold=0.0):
     """
     Query Pinecone index with an embedding of the query text.
     
@@ -308,6 +308,7 @@ def query_pinecone(index, query_text, top_k=5, filter_by_space=None):
         query_text: The text query to search for
         top_k: Number of results to return (default: 5)
         filter_by_space: Optional space/namespace to filter results by
+        similarity_threshold: Minimum similarity score to include in results (default: 0.0)
         
     Returns:
         List of tuples (source_url, text_content, score) of the top matching documents
@@ -384,6 +385,9 @@ def query_pinecone(index, query_text, top_k=5, filter_by_space=None):
             if space in namespaces:
                 namespace = space
                 print(f"Using single configured space: '{namespace}'")
+        # Always default to 'all' namespace if it exists and no other namespace was selected
+        elif 'all' in namespaces and not namespace:
+            namespace = 'all'
             
         print(f"Querying Pinecone with: '{query_text}' using namespace: {namespace if namespace else 'all'}")
         
@@ -394,12 +398,15 @@ def query_pinecone(index, query_text, top_k=5, filter_by_space=None):
             return []
             
         query_embedding = embedding_response.data[0].embedding
-        print(f"Dimension of query embedding: ", len(query_embedding))
+        print(f"Dimension of query embedding: {len(query_embedding)}")
+        
+        # Increase top_k to retrieve more potential matches
+        search_top_k = top_k * 3  # Get more results than needed to filter by threshold
         
         # Query Pinecone
         results = index.query(
             vector=query_embedding,
-            top_k=top_k,
+            top_k=search_top_k,
             include_metadata=True,
             namespace=namespace
         )
@@ -413,17 +420,45 @@ def query_pinecone(index, query_text, top_k=5, filter_by_space=None):
         for match in results['matches']:
             # Extract metadata
             metadata = match.get('metadata', {})
-            source = metadata.get('source', 'No source available')
-            text = metadata.get('text', 'No content available')
+            
+            # Use a hierarchy of fields for source URL
+            source = None
+            if 'source' in metadata:
+                source = metadata['source']
+            elif 'url' in metadata:
+                source = metadata['url']
+            else:
+                source = 'No source available'
+            
+            # Get text content with fallbacks
+            text = None
+            if 'text' in metadata:
+                text = metadata['text']
+            elif 'content' in metadata:
+                text = metadata['content']
+            elif 'title' in metadata:
+                # If no content, use title as a minimal text representation
+                text = f"Title: {metadata['title']}"
+            else:
+                text = 'No content available'
+            
+            # Get space information
+            space_info = ""
+            if 'space' in metadata:
+                space_info = f" [space: {metadata['space']}]"
+            elif 'space_key' in metadata:
+                space_info = f" [space: {metadata['space_key']}]"
+            
+            # Get score
             score = match.get('score', 0.0)
             
-            # Debug namespaces
-            namespace_info = ""
-            if 'space' in metadata:
-                namespace_info = f" [space: {metadata['space']}]"
-            
-            print(f"Match{namespace_info} - score: {score:.4f}, source: {source[:50]}...")
-            extracted_info.append((source, text, score))
+            # Only include results above the threshold
+            if score >= similarity_threshold:
+                print(f"Match{space_info} - score: {score:.4f}, source: {source[:50]}...")
+                extracted_info.append((source, text, score))
+        
+        # Limit to top_k results after filtering
+        extracted_info = extracted_info[:top_k]
         
         print(f"Query returned {len(extracted_info)} results")
         return extracted_info

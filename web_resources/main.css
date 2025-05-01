@@ -7,6 +7,7 @@
     --jhu-blue: #002D72;
     --jhu-white: #FFFFFF;
     --jhu-light-blue: #E2E8F0;
+    --jhu-heritage-blue: #002D72;
 }
 
 /* Body styling */
@@ -149,8 +150,8 @@ body {
 }
 
 .gr-button {
-    background-color: var(--jhu-light-blue) !important;
-    color: var(--jhu-blue) !important;
+    background-color: var(--jhu-heritage-blue) !important;
+    color: var(--jhu-white) !important;
     border: none !important;
 }
 
@@ -164,32 +165,73 @@ body {
 .chatbot {
     height: 700px;
     overflow-y: auto;
-    background-color: var(--jhu-white) !important; /* Explicitly set chatbot background to white */
-}
-
-.chatbot .user {
-    background-color: var(--jhu-light-blue) !important;
-    color: var(--jhu-blue) !important;
-    border-radius: 0 !important;
-    margin: 0 !important;
-    padding: 12px 20px !important;
-}
-
-.chatbot .bot {
-    /* Ensure bot messages have white background */
     background-color: var(--jhu-white) !important;
-    color: var(--jhu-blue) !important;
-    border: none !important;
-    border-radius: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
 }
 
+/* Remove the general .message rule */
+/*
 .message {
     padding: 0 !important;
     border-radius: 0 !important;
     margin: 0 !important;
     border: none !important;
-    /* Ensure message container itself has white background */
     background-color: var(--jhu-white) !important;
+}
+*/
+
+/* Use more direct selectors */
+.message.user {
+    background-color: var(--jhu-blue) !important;
+    color: var(--jhu-white) !important;
+    border-radius: 4px !important;
+    margin: 0 !important;
+    padding: 12px 20px !important;
+    margin-bottom: 10px !important;
+}
+
+.message.bot {
+    background-color: var(--jhu-white) !important;
+    color: var(--jhu-blue) !important;
+    border: none !important;
+    border-radius: 4px !important;
+    margin: 0 !important;
+    padding: 12px 20px !important;
+    margin-bottom: 10px !important;
+}
+
+/* Remove the old selectors if they existed elsewhere */
+/*
+.chatbot .user { ... }
+.chatbot .bot { ... }
+*/
+
+/* Style the text input box */
+textarea {
+    background-color: var(--jhu-white) !important;
+    color: var(--jhu-blue) !important;
+    border-color: var(--jhu-light-blue) !important;
+}
+
+/* Optional: Style the placeholder text */
+textarea::placeholder {
+    color: var(--text-gray) !important;
+}
+
+.tip-section {
+    background-color: #f8f9fa;
+    border-left: 4px solid #0072CE;
+    padding: 12px 15px;
+    margin: 15px 0;
+    border-radius: 4px;
+    color: var(--jhu-blue);
+}
+
+.tip-section p {
+    margin: 5px 0;
+}
+
+.tip-section strong {
+    color: #0072CE;
 }

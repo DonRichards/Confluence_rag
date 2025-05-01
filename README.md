@@ -113,6 +113,26 @@ pipenv run python app_pinecone_openai.py
 - **RAG Flow Chart**: Please refer to the `rag_flowchart.png` in the repository for a visual representation of the system workflow.
 ![RAG Flow Chart](rag_flowchart.png "Retrieval Augmented Generation Flow Chart")
 
+## Incremental Updates
+
+This project now supports incremental updates, which means it can update only the content that has changed since the last run, rather than reprocessing all content every time. This makes the update process much more efficient and cost-effective.
+
+To run an incremental update:
+```bash
+./update_incrementally.sh
+```
+
+Or manually:
+```bash
+# Step 1: Update content from Confluence
+pipenv run python app_confluence.py
+
+# Step 2: Perform incremental update
+pipenv run python update_database.py --incremental
+```
+
+For more details, see [incremental_updates.md](incremental_updates.md).
+
 ## Thank you and happy coding!
 
 

@@ -561,7 +561,9 @@ def fetch_all_content():
                     'url': f"{os.getenv('CONFLUENCE_DOMAIN')}/pages/viewpage.action?pageId={item['id']}",
                     'content': content,
                     'space_key': space_key,
-                    'space_name': space_name
+                    'space_name': space_name,
+                    'content_type': 'page',
+                    'last_modified': item.get('version', {}).get('when', '')
                 })
             except Exception as e:
                 print(f"Error processing content item {item.get('id', 'Unknown')}: {str(e)}")
@@ -621,7 +623,9 @@ def fetch_all_content_alternative():
                             'url': f"{os.getenv('CONFLUENCE_DOMAIN')}/pages/viewpage.action?pageId={page['id']}",
                             'content': content,
                             'space_key': space_key,
-                            'space_name': space_name
+                            'space_name': space_name,
+                            'content_type': 'page',
+                            'last_modified': page.get('version', {}).get('when', '')
                         })
                     except Exception as e:
                         print(f"Error processing page {page.get('id', 'Unknown')}: {str(e)}")
@@ -760,7 +764,10 @@ def fetch_content_direct():
                                     'title': page['title'],
                                     'url': f"{confluence_domain}/pages/viewpage.action?pageId={page_id}",
                                     'content': content,
-                                    'space_key': space_key
+                                    'space_key': space_key,
+                                    'space_name': space_key,
+                                    'content_type': 'page',
+                                    'last_modified': page_data.get('version', {}).get('when', '')
                                 })
                                 
                                 space_content_count += 1
@@ -1046,7 +1053,8 @@ def fetch_content_from_spaces():
                                         'content': content,
                                         'space_key': space_key,
                                         'space_name': space_name,
-                                        'content_type': content_type
+                                        'content_type': content_type,
+                                        'last_modified': item.get('version', {}).get('when', '')
                                     })
                                     
                                     # Increment our counter
@@ -1172,7 +1180,8 @@ def fetch_with_atlassian_api():
                             'content': content,
                             'space_key': space_key,
                             'space_name': page.get('space', {}).get('name', space_key),
-                            'content_type': 'page'
+                            'content_type': 'page',
+                            'last_modified': page.get('version', {}).get('when', '')
                         })
                         
                     except Exception as e:

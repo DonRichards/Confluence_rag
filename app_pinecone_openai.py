@@ -23,8 +23,9 @@ load_dotenv(find_dotenv())
 LOGS_DIR = os.path.join(os.getcwd(), "conversation_logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 
-# Global variable to store the current conversation history
+# Global variables
 current_history = []
+session_id = None
 
 # Function to extract information
 def extract_info(data):
@@ -533,7 +534,14 @@ def generate_response(query, query_results):
         system_message = """You are a knowledgeable AI assistant that provides helpful and accurate information based on the available context.
 If the information isn't in the provided context, admit that you don't know rather than making up an answer.
 When answering, cite the source URLs from the context when appropriate.
-Be concise and focus on directly answering the user's query."""
+Be concise and focus on directly answering the user's query.
+
+When the user asks about a specific space or collection:
+1. Look for information in the context that mentions that space by name, key, or ID
+2. Pay attention to metadata like URLs containing space information (e.g., spaceKey=SPACENAME)
+3. Analyze the content from documents in that space to infer the purpose of the space
+4. If you find multiple documents from the same space, this may indicate the space's focus
+5. If you can make reasonable inferences about a space based on document titles or content, do so while noting it's an inference."""
         
         # Format messages for OpenAI API
         messages = [
@@ -568,11 +576,11 @@ def log_conversation(user_input, assistant_response, session_id, history=None, r
             })
     else:
         # Fallback to global current_history
-    for user_msg, bot_msg in current_history:
-        conversation_history.append({
-            "user": user_msg,
-            "assistant": bot_msg
-        })
+        for user_msg, bot_msg in current_history:
+            conversation_history.append({
+                "user": user_msg,
+                "assistant": bot_msg
+            })
     
     log_entry = {
         "timestamp": timestamp,
@@ -621,82 +629,154 @@ def fork_conversation(message, history, selected_message):
     
     return history
 
+# Process space-related queries to improve retrieval
+def preprocess_space_query(message):
+    """
+    Preprocess space-related queries to improve retrieval effectiveness.
+    
+    Args:
+        message: The original user query
+        
+    Returns:
+        str: The preprocessed query optimized for retrieval
+    """
+    # Check if this is a space-related query
+    space_related_keywords = ['space', 'collection', 'namespace', 'group', 'team', 'community', 'project']
+    
+    # Check if query is specifically about what a space is or its purpose
+    purpose_patterns = [
+        r'what is the (purpose|point|goal|objective) of',
+        r'what is the .* space',
+        r'what is .* space for',
+        r'what is .* space about',
+        r'what does .* space do',
+        r'tell me about .* space',
+        r'purpose of .* space',
+        r'why does .* space exist'
+    ]
+    
+    is_purpose_query = False
+    import re
+    for pattern in purpose_patterns:
+        if re.search(pattern, message.lower()):
+            is_purpose_query = True
+            break
+    
+    # If it's a space purpose query, expand it
+    if is_purpose_query:
+        # Extract space name
+        space_name = None
+        for pattern in purpose_patterns:
+            match = re.search(pattern + r' (the |)([a-zA-Z0-9_\-]+)', message.lower())
+            if match:
+                space_name = match.group(2)
+                break
+        
+        if space_name:
+            # Generate an expanded query
+            expanded_query = f"{message} purpose objective focus topics documents content description"
+            print(f"Original query: '{message}' expanded to: '{expanded_query}'")
+            return expanded_query
+    
+    return message
+
 # Main chat function for Gradio
 def chat_function(message, history=None):
-    global current_history
-    
+    """Generate a chat response based on the user's message and conversation history."""
+    # Initialize or update conversation history
     if history is None:
         history = []
+        current_history.clear()
     
-    # Update current_history with the latest history
-    current_history = history.copy() if history else []
-        
+    # Save the original message for error reporting
+    original_message = message
+    
     try:
-        # Check if user is trying to filter by space
-        filter_by_space = None
-        original_message = message
-        
-        # Process special commands first
-        special_response = process_message(message, history)
-        if special_response:
-            updated_history = history + [(message, special_response)]
-            current_history = updated_history.copy()
-            return updated_history
-        
-        # Check for space filtering command patterns
-        space_filter_patterns = [
-            "search in space:", 
-            "filter by space:", 
-            "space:", 
-            "namespace:"
-        ]
-        
-        for pattern in space_filter_patterns:
-            if message.lower().startswith(pattern):
-                # Extract space name and query
-                parts = message[len(pattern):].strip().split(" ", 1)
-                if len(parts) == 2:
-                    filter_by_space = parts[0].strip()
-                    message = parts[1].strip()
-                    print(f"Detected space filter: '{filter_by_space}' with query: '{message}'")
-                else:
-                    updated_history = history + [(original_message, f"Please provide a query after specifying the space. Example: '{pattern} SpaceKey your query here'")]
-                    current_history = updated_history.copy()
-                    return updated_history
-        
-        print(f"Processing message: {message}")
+        # Generate a random session ID if none exists yet
+        global session_id
+        if not session_id:
+            import uuid
+            session_id = str(uuid.uuid4())
             
-        # Initialize Pinecone connection
-        index = init_pinecone()
-        if not index:
-            updated_history = history + [(original_message, "Failed to connect to the vector database. Please check your configuration.")]
-            current_history = updated_history.copy()
-            return updated_history
+        # Create the logs directory if it doesn't exist
+        os.makedirs(LOGS_DIR, exist_ok=True)
         
-        # Check if index contains data
+        # Check for content processing requests
+        content_response = process_message(message, history)
+        if content_response:
+            updated_history = history + [(message, content_response)]
+            current_history.clear()
+            for item in updated_history:
+                current_history.append(item)
+            log_conversation(message, content_response, session_id, history)
+            return updated_history
+            
+        # Check for conversation forking
+        if message.startswith("/fork"):
+            try:
+                parts = message.split(" ", 2)
+                if len(parts) >= 2:
+                    selected_index = int(parts[1]) - 1
+                    new_message = parts[2] if len(parts) > 2 else ""
+                    
+                    if 0 <= selected_index < len(history):
+                        return fork_conversation(new_message, history, selected_index)
+                    else:
+                        error_message = f"Invalid message index {selected_index + 1}. Please specify a valid message number."
+                        updated_history = history + [(message, error_message)]
+                        return updated_history
+                else:
+                    error_message = "Please use the format: /fork [message_number] [new_message]"
+                    updated_history = history + [(message, error_message)]
+                    return updated_history
+            except Exception as e:
+                error_message = f"Error forking conversation: {str(e)}"
+                updated_history = history + [(message, error_message)]
+                return updated_history
+        
+        # Process space-related queries
+        enhanced_message = preprocess_space_query(message)
+        
+        # Extract filter by space if specified in the message
+        filter_by_space = None
+        
+        # Check for space filter in format "search in space: SPACE_KEY query"
+        import re
+        space_match = re.search(r'search in (space|namespace|collection): (\w+)(.*)', enhanced_message, re.IGNORECASE)
+        
+        if space_match:
+            filter_by_space = space_match.group(2).strip()
+            enhanced_message = space_match.group(3).strip()
+            print(f"Detected space filter: {filter_by_space}, modified query: {enhanced_message}")
+        
+        # Alternative format: "in SPACE_KEY: query"
+        space_match2 = re.search(r'in (\w+):(.*)', enhanced_message, re.IGNORECASE)
+        if space_match2:
+            filter_by_space = space_match2.group(1).strip()
+            enhanced_message = space_match2.group(2).strip()
+            print(f"Detected alternative space filter: {filter_by_space}, modified query: {enhanced_message}")
+        
+        # Initialize Pinecone
+        print(f"Processing message: {enhanced_message}")
+        from utils.pinecone_logic import init_pinecone, query_pinecone
+        index = init_pinecone()
+        
+        # Get namespaces for filtering suggestions
+        namespaces = []
         try:
             stats = index.describe_index_stats()
-            total_vector_count = stats.total_vector_count if hasattr(stats, 'total_vector_count') else stats.get('total_vector_count', 0)
-            
-            if total_vector_count == 0:
-                updated_history = history + [(original_message, "The database is empty. Please add some documents first.")]
-                current_history = updated_history.copy()
-                return updated_history
-                
-            # Get available namespaces
-            namespaces = []
             if hasattr(stats, 'namespaces'):
                 namespaces = list(stats.namespaces.keys())
             elif 'namespaces' in stats:
                 namespaces = list(stats.get('namespaces', {}).keys())
-                
-            if namespaces:
-                print(f"Available namespaces: {namespaces}")
-        except Exception as e:
-            print(f"Error checking index stats: {str(e)}")
+        except:
+            pass
             
         # Query Pinecone for relevant information
-        query_results = query_pinecone(index, message, filter_by_space=filter_by_space)
+        query_results = query_pinecone(index, enhanced_message, filter_by_space=filter_by_space, similarity_threshold=0.3, top_k=8)
+        
+        # Log the current interaction
+        log_conversation(enhanced_message, "Processing...", session_id, history, query_results)
         
         if not query_results:
             # If filtering by space caused no results, give specific feedback
@@ -726,63 +806,32 @@ def chat_function(message, history=None):
             return updated_history
         
         # Generate response with OpenAI
-        response = generate_response(message, query_results)
+        response = generate_response(enhanced_message, query_results)
         
         if not response:
             return "Failed to generate a response. Please try again."
         
         # Format sources for display
-        formatted_sources = "<div class='sources-section'>"
-        formatted_sources += "<h4>Sources:</h4><ul>"
-        
-        # Get namespaces information for display
-        for i, (source, _, score) in enumerate(query_results):
-            # Extract namespace/space key information from the source URL
-            namespace = "default"
-            
-            # Try to extract space key from URL
-            try:
-                import re
-                # Extract space key from Confluence URL pattern
-                space_match = re.search(r'/spaces/([^/]+)', source)
-                if space_match:
-                    namespace = space_match.group(1)
-                else:
-                    # Try alternative pattern with spaceKey parameter
-                    space_key_match = re.search(r'spaceKey=([^&]+)', source)
-                    if space_key_match:
-                        namespace = space_key_match.group(1)
-            except:
-                pass
-            
-            # Add source entry with similarity score and namespace
-            similarity_percentage = int(score * 100)
-            formatted_sources += f"<li><strong>Source {i+1}</strong> [Space Key: <em>{namespace}</em>] - <a href='{source}' target='_blank'>{source}</a> (Similarity: {similarity_percentage}%)</li>"
-
-        formatted_sources += "</ul></div>"
+        formatted_sources = format_sources(query_results)
         
         # Add tips about space filtering if multiple namespaces exist
         space_filtering_tip = ""
         if namespaces and len(namespaces) > 1:
             spaces_list = ", ".join(namespaces)
-            space_filtering_tip = f"""
-            <div class='tip-section'>
-                <p><strong>Tip:</strong> You can filter results by space key using: "search in space: [space_key] [your query]"</p>
-                <p>Available space keys: {spaces_list}</p>
-            </div>
-            """
+            space_filtering_tip = f"""<div class="tip-section">
+<p><strong>Tip:</strong> You can filter results by space key using: "search in space: [space_key] [your query]"</p>
+<p>Available space keys: {spaces_list}</p>
+</div>"""
         
         # Final response with sources and optional tip
-        final_response = f"""
-        <div class='chat-response'>
-            <div class='response-content'>{response}</div>
-            {formatted_sources}
-            {space_filtering_tip}
-        </div>
-        """
+        final_response = f"""<div class="chat-response">
+<div class="response-content">{response}</div>
+{formatted_sources}
+{space_filtering_tip}
+</div>"""
         
         # Update history with the new message pair and return
-        updated_history = history + [(message, final_response)]
+        updated_history = history + [(original_message, final_response)]
         current_history = updated_history.copy()
         return updated_history
 
@@ -793,7 +842,7 @@ def chat_function(message, history=None):
         traceback.print_exc()
         
         # Return error message in the correct format for the chatbot
-        updated_history = history + [(message, f"I encountered an error while processing your request. Please try again or contact support if the issue persists. Error details: {str(e)}")]
+        updated_history = history + [(original_message, f"I encountered an error while processing your request. Please try again or contact support if the issue persists. Error details: {str(e)}")]
         current_history = updated_history.copy()
         return updated_history
 
@@ -979,6 +1028,40 @@ def create_rag_app():
         
     return app
 
+# Format sources section with double quotes instead of single quotes
+def format_sources(query_results):
+    if not query_results:
+        return ""
+    
+    sources_html = '<div class="sources-section">\n<p class="sources-header">Sources:</p>\n<ul class="sources-list">'
+    
+    # Get namespaces information for display
+    for i, (source, _, score) in enumerate(query_results):
+        # Extract namespace/space key information from the source URL
+        namespace = "default"
+        
+        # Try to extract space key from URL
+        try:
+            import re
+            # Extract space key from Confluence URL pattern
+            space_match = re.search(r'/spaces/([^/]+)', source)
+            if space_match:
+                namespace = space_match.group(1)
+            else:
+                # Try alternative pattern with spaceKey parameter
+                space_key_match = re.search(r'spaceKey=([^&]+)', source)
+                if space_key_match:
+                    namespace = space_key_match.group(1)
+        except:
+            pass
+        
+        # Add source entry with similarity score and namespace
+        similarity_percentage = int(score * 100)
+        sources_html += f'\n<li class="source-item">Source {i+1} [Space Key: <em>{namespace}</em>] - <a href="{source}" class="source-link" target="_blank">{source}</a> <span class="similarity-score">(Similarity: {similarity_percentage}%)</span></li>'
+    
+    sources_html += "\n</ul>\n</div>"
+    return sources_html
+
 if __name__ == "__main__":
     # Add debug option via command line
     if len(sys.argv) > 1 and sys.argv[1] == '--debug-pinecone':
@@ -1069,8 +1152,9 @@ if __name__ == "__main__":
         )
         
         # Add JavaScript to clear the input after submission
-        enter_event.then(lambda: "", None, msg)
-        submit_click_event.then(lambda: "", None, msg)
+        # Always clear the input field regardless of whether the function succeeds or fails
+        enter_event.then(lambda: "", None, msg, show_progress=False)
+        submit_click_event.then(lambda: "", None, msg, show_progress=False)
     
     # Launch the interface
-    demo.launch(server_name="localhost", server_port=8888, share=False)
+    demo.launch(server_name="localhost", server_port=8889, share=False)
