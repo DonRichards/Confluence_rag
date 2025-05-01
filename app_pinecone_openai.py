@@ -1157,4 +1157,4 @@ if __name__ == "__main__":
         submit_click_event.then(lambda: "", None, msg, show_progress=False)
     
     # Launch the interface
-    demo.launch(server_name="localhost", server_port=8889, share=False)
+    demo.launch(server_name="localhost", server_port=8888, share=False)
