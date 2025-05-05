@@ -137,6 +137,12 @@ For more details, see [incremental_updates.md](incremental_updates.md).
 
 
 ## Todo
-[] Seporate out the data into their own vector database namespaces (SPACES names)
-[] Also add all of them to the "default" namespace
-[] Add a drop down to isolate to a single name space or all of them.
+[X] Seporate out the data into their own vector database namespaces (SPACES names)
+[X] Also add all of them to the "default" namespace
+[X] Add the ability to isolate to a date range.
+[ ] Output a specific page by URL, title, description of page, etc.
+[ ] Comprehensive output when asked.
+[ ] Output with formatting that can be pasted into Confluence editor.
+[ ] Show the formatted output from a Confluence page.
+[ ] Summarize / Reword a page more effectively.
+[ ] <-- Add more use cases here. ---<<

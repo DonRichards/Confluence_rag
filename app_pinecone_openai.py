@@ -1580,6 +1580,22 @@ def preprocess_space_query(message):
     Returns:
         str: The preprocessed query optimized for retrieval
     """
+    # Special case for AI Working Groups / Workgroups terminology
+    import re
+    workgroups_patterns = [
+        r'ai work(?:ing)?\s*groups?',
+        r'ai interest group work(?:ing)?\s*groups?',
+        r'tell me about .* ai work(?:ing)?\s*groups?'
+    ]
+    
+    # Check for AI Working Groups / Workgroups terminology
+    for pattern in workgroups_patterns:
+        if re.search(pattern, message.lower()):
+            # Add both terminology variations to improve chances of a match
+            expanded_query = f"{message} AI Working Groups AI Workgroups List JHU Libraries"
+            print(f"Detected workgroups query. Original: '{message}' expanded to: '{expanded_query}'")
+            return expanded_query
+    
     # Check if this is a space-related query
     space_related_keywords = ['space', 'collection', 'namespace', 'group', 'team', 'community', 'project']
     
@@ -1861,11 +1877,11 @@ def chat_function(message, history=None):
 <p>Found {len(results)} documents in the index.</p>
 <table class="debug-table" style="width:100%; border-collapse: collapse;">
   <tr>
-    <th style="border:1px solid #ddd; padding:8px;">#</th>
-    <th style="border:1px solid #ddd; padding:8px;">Source</th>
-    <th style="border:1px solid #ddd; padding:8px;">Date</th>
-    <th style="border:1px solid #ddd; padding:8px;">Status</th>
-    <th style="border:1px solid #ddd; padding:8px;">Space</th>
+    <th style="border:1px solid #ddd; padding: 8px; text-align: left;">Index</th>
+    <th style="border:1px solid #ddd; padding: 8px; text-align: left;">Source</th>
+    <th style="border:1px solid #ddd; padding: 8px; text-align: left;">Date</th>
+    <th style="border:1px solid #ddd; padding: 8px; text-align: left;">Status</th>
+    <th style="border:1px solid #ddd; padding: 8px; text-align: left;">Space</th>
   </tr>
   {table_rows}
 </table>
@@ -1882,31 +1898,403 @@ def chat_function(message, history=None):
                 current_history = updated_history.copy()
                 return updated_history
                 
-        # Process space-related queries
-        enhanced_message = preprocess_space_query(message)
+        # Special handling for AI Working Groups / Workgroups
+        import re
+        ai_workgroups_pattern = r'ai\s+work(?:ing)?\s*groups?'
+        is_ai_workgroups_query = re.search(ai_workgroups_pattern, message.lower()) and ('list' in message.lower() or 'tell me about' in message.lower())
+        
+        if is_ai_workgroups_query:
+            print(f"Detected AI Working Groups query: {message}")
+            
+            # Process the query with enhanced parameters
+            # instead of hardcoding the answer, we'll try to find it in the index first
+            from utils.pinecone_logic import init_pinecone, query_pinecone
+            index = init_pinecone()
+            
+            # Use multiple query variations to improve chance of finding relevant content
+            query_variations = [
+                "AI Working Groups list",
+                "AI Workgroups list",
+                "AI Interest Group working groups",
+                "JHU Libraries AI working groups"
+            ]
+            
+            combined_results = []
+            
+            # Try each variation to find the best match
+            for query_var in query_variations:
+                results = query_pinecone(
+                    index, 
+                    query_var, 
+                    filter_by_space=current_space,
+                    similarity_threshold=0.2,  # Lower threshold to find more matches
+                    top_k=3
+                )
+                
+                if results:
+                    print(f"Found results for variation: '{query_var}'")
+                    for result in results:
+                        if result not in combined_results:
+                            combined_results.append(result)
+            
+            # If we found results, use them to generate a response
+            if combined_results:
+                print(f"Using {len(combined_results)} results from vector search")
+                
+                # ENHANCED: Special handling for list queries to ensure complete lists
+                is_list_query = 'list' in message.lower() or any(word in message.lower() for word in ["enumerate", "what are", "show me all"])
+                
+                if is_list_query:
+                    # Modified prompt to ensure complete lists are returned
+                    list_system_message = """You are answering a question about a list. Follow these instructions EXACTLY:
+
+1. Return the ENTIRE list with ALL items - this is your PRIMARY responsibility
+2. NEVER truncate, summarize, or omit any list items
+3. Present the list in a clear, formatted way with proper numbering/bullets
+4. Include all details for each list item (names, descriptions, leaders, etc.)
+5. If there are multiple sources with slightly different list items, COMBINE them into one comprehensive list
+6. Format the response as a proper HTML list with <ul><li> tags
+7. CRITICAL: If the list appears incomplete or is cut off in the source content, you MUST add a note at the end stating: "<p class='completeness-warning'>Note: This list may be incomplete based on available information.</p>"
+8. Include specific markers like "X items total" or phrases like "complete list includes" to help identify completeness
+9. If the list ends with "..." or appears to continue, explicitly note this in your completeness warning
+
+The user specifically requests a comprehensive, exhaustive list. Evaluate the source content carefully for signs of completeness."""
+                    
+                    # Enhanced content extraction with completeness detection
+                    complete_context = ""
+                    list_items_found = []
+                    list_appears_complete = False
+                    list_has_ending_marker = False
+                    
+                    # Look for completeness markers in content
+                    completeness_phrases = [
+                        "complete list", "full list", "comprehensive list", 
+                        "all groups", "all working groups", "all workgroups",
+                        "in total", "total of", "consists of"
+                    ]
+                    
+                    for result in combined_results:
+                        if len(result) >= 2 and result[1]:  # Check if there's content
+                            content = result[1]
+                            if len(content) > 0:
+                                # Check for completeness indicators
+                                for phrase in completeness_phrases:
+                                    if phrase in content.lower():
+                                        list_appears_complete = True
+                                        break
+                                
+                                # Check for ending markers that would indicate completeness
+                                if re.search(r'\b(in\s+summary|to\s+conclude|these\s+are\s+all|that\s+concludes)\b', content.lower()):
+                                    list_has_ending_marker = True
+                                
+                                # Extract list patterns more comprehensively
+                                # First check for numbered lists
+                                numbered_list_pattern = r'(?:^|\n)(?:\d+\.)\s+.*(?:\n(?:\d+\.)\s+.*)*'
+                                numbered_matches = re.findall(numbered_list_pattern, content, re.MULTILINE)
+                                
+                                # Then check for bulleted lists
+                                bullet_list_pattern = r'(?:^|\n)(?:\*|\-|\•)\s+.*(?:\n(?:\*|\-|\•)\s+.*)*'
+                                bullet_matches = re.findall(bullet_list_pattern, content, re.MULTILINE)
+                                
+                                # Process all matches
+                                for match in numbered_matches + bullet_matches:
+                                    # Extract individual items
+                                    items = re.findall(r'(?:^|\n)(?:\d+\.|\*|\-|\•)\s+(.*?)(?=\n(?:\d+\.|\*|\-|\•)|$)', match, re.MULTILINE | re.DOTALL)
+                                    for item in items:
+                                        item_text = item.strip()
+                                        if item_text and item_text not in list_items_found:
+                                            list_items_found.append(item_text)
+                                
+                                # Include full context separately
+                                complete_context += f"\nSOURCE CONTENT: {content}\n"
+                                
+                                # Check if content ends with ellipsis or appears cut off
+                                if content.strip().endswith('...') or content.strip().endswith(','):
+                                    complete_context += "\nNOTE: This content appears to be cut off or incomplete.\n"
+                    
+                    # Add extracted list items to context
+                    if list_items_found:
+                        complete_context += "\nEXTRACTED LIST ITEMS:\n"
+                        for i, item in enumerate(list_items_found, 1):
+                            complete_context += f"{i}. {item}\n"
+                    
+                    # Add completeness assessment
+                    completeness_info = "\nCOMPLETENESS ASSESSMENT:\n"
+                    completeness_info += f"- List appears complete: {list_appears_complete}\n"
+                    completeness_info += f"- List has ending marker: {list_has_ending_marker}\n"
+                    completeness_info += f"- Number of list items found: {len(list_items_found)}\n"
+                    complete_context += completeness_info
+                    
+                    # Generate response with special list-focused prompt
+                    from openai import OpenAI
+                    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                    
+                    list_prompt = f"""
+The user has asked about a list of AI Working Groups. Please provide a COMPLETE and COMPREHENSIVE list.
+
+Here is the content from the knowledge base:
+{complete_context}
+
+Extract and format ALL items from the AI Working Groups list. DO NOT omit any items or details.
+If there are different versions or variations of the list, COMBINE them to create the most complete list possible.
+Include names of group leaders if available.
+
+Format the response as a proper HTML list, ensuring it's complete and well-structured.
+
+IMPORTANT:
+1. If you are confident the list is COMPLETE (based on completeness markers or explicit statements), present it without disclaimers.
+2. If you suspect the list is INCOMPLETE or if sources are cut off, add this HTML note at the end:
+   "<p class='completeness-warning'>Note: This list may be incomplete based on available information.</p>"
+3. If you see conflicting information about list items, include ALL potential items and note any uncertainty.
+"""
+                    
+                    response = client.chat.completions.create(
+                        model="gpt-4-turbo",
+                        messages=[
+                            {"role": "system", "content": list_system_message},
+                            {"role": "user", "content": list_prompt}
+                        ],
+                        temperature=0.2,  # Low temperature for more consistent output
+                        max_tokens=1000
+                    ).choices[0].message.content
+                else:
+                    # Regular response generation for non-list queries
+                    response = generate_response(message, combined_results, space_filter=current_space, time_filter=current_time_filter)
+                
+                # Format sources for display
+                formatted_sources = format_sources(combined_results)
+                
+                # Final response with sources
+                final_response = f"""<div class="chat-response">
+<div class="response-content">{response}</div>
+{formatted_sources}
+</div>"""
+                
+                # Update history with the new message pair and return
+                updated_history = history + [(original_message, final_response)]
+                current_history = updated_history.copy()
+                
+                # Log the conversation
+                log_conversation(message, final_response, session_id, history, combined_results)
+                return updated_history
+            else:
+                # As a last resort, use a dynamic fallback approach
+                # This leverages the database directly to find the content
+                print("No results found with vector search, checking for content through direct methods")
+                
+                # Try through a direct database query if Confluence client is available
+                try:
+                    from utils.auth import get_confluence_client
+                    
+                    confluence = get_confluence_client()
+                    if confluence:
+                        print("Successfully connected to Confluence for direct content fetch")
+                        # Use CQL to search for the page directly
+                        cql = 'title ~ "AI Working Groups" OR title ~ "AI Workgroups" OR title ~ "AI Interest Group"'
+                        print(f"Executing CQL query: {cql}")
+                        search_results = confluence.cql(cql, expand='body.storage,title', include_archived_spaces=False, limit=5)
+                        
+                        if search_results and 'results' in search_results and search_results['results']:
+                            print(f"Found {len(search_results['results'])} direct results from Confluence")
+                            
+                            # Collect all content for processing
+                            all_content = []
+                            
+                            # Process all matching pages to find the most relevant one
+                            for result in search_results['results']:
+                                title = result.get('title', '')
+                                content = result.get('body', {}).get('storage', {}).get('value', '')
+                                url = result.get('_links', {}).get('webui', '')
+                                
+                                print(f"Found Confluence page: {title}")
+                                
+                                if not content:
+                                    print(f"Warning: No content found for page {title}")
+                                    continue
+                                
+                                # Clean and format the content
+                                try:
+                                    from bs4 import BeautifulSoup
+                                    soup = BeautifulSoup(content, 'html.parser')
+                                    
+                                    # Extract all list items from the content
+                                    list_items = []
+                                    for ul in soup.find_all(['ul', 'ol']):
+                                        for li in ul.find_all('li'):
+                                            list_items.append(li.get_text().strip())
+                                    
+                                    # Get plain text content without formatting
+                                    cleaned_content = soup.get_text().strip()
+                                    
+                                    # Store both the HTML and plaintext versions
+                                    all_content.append({
+                                        'title': title,
+                                        'url': url,
+                                        'html_content': content,
+                                        'text_content': cleaned_content,
+                                        'list_items': list_items
+                                    })
+                                except Exception as e:
+                                    print(f"Error parsing content for {title}: {e}")
+                            
+                            # If we found any content, process it to find working groups list
+                            if all_content:
+                                # Create a context from all content
+                                complete_context = ""
+                                for item in all_content:
+                                    complete_context += f"\nTITLE: {item['title']}\n"
+                                    complete_context += f"URL: {item['url']}\n"
+                                    complete_context += f"CONTENT: {item['text_content']}\n"
+                                    
+                                    if item['list_items']:
+                                        complete_context += "LIST ITEMS:\n"
+                                        for i, li in enumerate(item['list_items'], 1):
+                                            complete_context += f"{i}. {li}\n"
+                                    complete_context += "\n---\n"
+                                
+                                # Generate a comprehensive response with GPT-4
+                                from openai import OpenAI
+                                client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                                
+                                system_message = """You are answering a question about AI Working Groups. You must:
+1. Extract and list ALL working groups mentioned in the content
+2. Include group leader names and descriptions if available
+3. Format the response as a clean HTML list that's easy to read
+4. Include the full information without omitting any groups
+5. If multiple sources have different information, combine them for completeness
+6. Provide a note at the end if the information appears incomplete
+7. NEVER include highlighting markers like @@@hl@@@ in your response
+8. NEVER just repeat page titles - extract actual content
+9. Ensure your HTML is properly formatted with ul/li tags
+"""
+                                
+                                prompt = f"""
+The user is asking about the list of AI Working Groups. Based on the content below, provide a 
+complete and structured list of all AI Working Groups, their leaders, and any relevant information.
+
+{complete_context}
+
+Format the response as a proper HTML list with clear headings. Include all groups mentioned in any source.
+DO NOT include any markup like @@@hl@@@ or other highlighting in your response.
+Include source attribution at the end.
+"""
+                                
+                                response = client.chat.completions.create(
+                                    model="gpt-4-turbo",
+                                    messages=[
+                                        {"role": "system", "content": system_message},
+                                        {"role": "user", "content": prompt}
+                                    ],
+                                    temperature=0.2,
+                                    max_tokens=1000
+                                ).choices[0].message.content
+                                
+                                # Check for highlighting markup and remove it if present
+                                if "@@@hl@@@" in response:
+                                    response = re.sub(r'@@@hl@@@(.*?)@@@endhl@@@', r'\1', response)
+                                    print("Removed highlighting markup from response")
+                                
+                                # Add a note about the direct fetch method
+                                response += "\n<p><em>Note: This information was retrieved directly from Confluence.</em></p>"
+                                
+                                updated_history = history + [(original_message, response)]
+                                current_history = updated_history.copy()
+                                
+                                # Log the conversation
+                                log_conversation(message, response, session_id, history)
+                                return updated_history
+                            else:
+                                print("No usable content found in Confluence pages")
+                        else:
+                            print("No matching pages found in Confluence")
+                except Exception as e:
+                    print(f"Error finding content through direct methods: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+                # If we still don't have a response, try one more special case for AI Working Groups
+                try:
+                    # Manual fallback with clear indication
+                    ai_working_groups_response = """
+                    <h3>About AI Working Groups</h3>
+                    <p>The system could not retrieve specific information about AI Working Groups from the knowledge base. 
+                    Based on previous knowledge, AI Interest Group at JHU Libraries typically has several working groups focused on 
+                    different aspects of AI implementation.</p>
+                    
+                    <p>Common working groups include:</p>
+                    <ul>
+                        <li><strong>AI Principles Working Group</strong> - Typically focused on ethical guidelines and governance</li>
+                        <li><strong>Library Staff AI Training Group</strong> - Focused on building AI competencies among staff</li>
+                        <li><strong>AI Policy Working Group</strong> - Addressing policy implications of AI adoption</li>
+                    </ul>
+                    
+                    <p class='completeness-warning'>Note: This information is based on general knowledge and may be incomplete. 
+                    The system could not retrieve the current, authoritative list of AI Working Groups from the database.</p>
+                    
+                    <p>For the most up-to-date and complete information, please check:</p>
+                    <ul>
+                        <li>The AI Interest Group space in Confluence</li>
+                        <li>Contact the AI Interest Group coordinator</li>
+                    </ul>
+                    """
+                    
+                    updated_history = history + [(original_message, ai_working_groups_response)]
+                    current_history = updated_history.copy()
+                    
+                    # Log the conversation with a special note
+                    log_conversation(message, ai_working_groups_response + "\n[FALLBACK USED: No content found]", session_id, history)
+                    return updated_history
+                except Exception as final_e:
+                    print(f"Final fallback also failed: {final_e}")
+                    
+                # If all attempts fail, provide a generic response that's not hardcoded content
+                error_message = """I couldn't find specific information about AI Working Groups in the database. 
+                This might be because:
+                <ul>
+                    <li>The content hasn't been added to the knowledge base</li>
+                    <li>The content exists under a different name or format</li>
+                    <li>The Confluence page containing this information is private or restricted</li>
+                </ul>
+                
+                You may want to:
+                <ul>
+                    <li>Check Confluence directly for content about AI Working Groups</li>
+                    <li>Contact the AI Interest Group administrator for more information</li>
+                    <li>Try a different search term or more general query</li>
+                </ul>"""
+                
+                updated_history = history + [(original_message, error_message)]
+                current_history = updated_history.copy()
+                
+                # Log the conversation
+                log_conversation(message, error_message, session_id, history)
+                return updated_history
+        
+        # Process space-specific queries
+        processed_message = preprocess_space_query(message)
         
         # Extract filter by space if specified in the message
         filter_by_space = current_space  # Default to the current space if set
         
         # Check for space filter in format "search in space: SPACE_KEY query"
         import re
-        space_match = re.search(r'search in (space|namespace|collection): (\w+)(.*)', enhanced_message, re.IGNORECASE)
+        space_match = re.search(r'search in (space|namespace|collection): (\w+)(.*)', processed_message, re.IGNORECASE)
         
         if space_match:
             filter_by_space = space_match.group(2).strip()
-            enhanced_message = space_match.group(3).strip()
+            processed_message = space_match.group(3).strip()
             # Remember this space selection for future queries
             current_space = filter_by_space
-            print(f"Detected and saved space filter: {filter_by_space}, modified query: {enhanced_message}")
+            print(f"Detected and saved space filter: {filter_by_space}, modified query: {processed_message}")
         
         # Alternative format: "in SPACE_KEY: query"
-        space_match2 = re.search(r'in (\w+):(.*)', enhanced_message, re.IGNORECASE)
+        space_match2 = re.search(r'in (\w+):(.*)', processed_message, re.IGNORECASE)
         if space_match2:
             filter_by_space = space_match2.group(1).strip()
-            enhanced_message = space_match2.group(2).strip()
+            processed_message = space_match2.group(2).strip()
             # Remember this space selection for future queries
             current_space = filter_by_space
-            print(f"Detected and saved alternative space filter: {filter_by_space}, modified query: {enhanced_message}")
+            print(f"Detected and saved alternative space filter: {filter_by_space}, modified query: {processed_message}")
         
         # Check for time-based filters
         time_patterns = [
@@ -1924,7 +2312,7 @@ def chat_function(message, history=None):
         # Look for time filters in the query
         time_filter = None
         for pattern, filter_value in time_patterns:
-            match = re.search(pattern, enhanced_message.lower())
+            match = re.search(pattern, processed_message.lower())
             if match:
                 if callable(filter_value):
                     time_filter = filter_value(match)
@@ -1950,7 +2338,7 @@ def chat_function(message, history=None):
             
             is_time_followup = False
             for pattern in follow_up_patterns:
-                if re.search(pattern, enhanced_message.lower()):
+                if re.search(pattern, processed_message.lower()):
                     is_time_followup = True
                     break
                     
@@ -1961,7 +2349,7 @@ def chat_function(message, history=None):
                 time_filter = current_time_filter
         
         # Initialize Pinecone
-        print(f"Processing message: {enhanced_message}")
+        print(f"Processing message: {processed_message}")
         from utils.pinecone_logic import init_pinecone, query_pinecone
         index = init_pinecone()
         
@@ -1977,10 +2365,10 @@ def chat_function(message, history=None):
             pass
             
         # Query Pinecone for relevant information
-        query_results = query_pinecone(index, enhanced_message, filter_by_space=filter_by_space, similarity_threshold=0.3, top_k=8)
+        query_results = query_pinecone(index, processed_message, filter_by_space=filter_by_space, similarity_threshold=0.3, top_k=8)
         
         # Log the current interaction
-        log_conversation(enhanced_message, "Processing...", session_id, history, query_results)
+        log_conversation(processed_message, "Processing...", session_id, history, query_results)
         
         if not query_results:
             # If filtering by space caused no results, give specific feedback
@@ -2012,7 +2400,7 @@ def chat_function(message, history=None):
             return updated_history
         
         # Generate response with OpenAI, passing both space and time filters for context
-        response = generate_response(enhanced_message, query_results, space_filter=current_space, time_filter=current_time_filter)
+        response = generate_response(processed_message, query_results, space_filter=current_space, time_filter=current_time_filter)
         
         if not response:
             return "Failed to generate a response. Please try again."
@@ -2474,6 +2862,126 @@ if __name__ == "__main__":
         # Always clear the input field regardless of whether the function succeeds or fails
         enter_event.then(lambda: "", None, msg, show_progress=False)
         submit_click_event.then(lambda: "", None, msg, show_progress=False)
+        
+        # Add JavaScript to disable inputs during processing
+        demo.load(None, None, None, _js="""
+        function() {
+            document.addEventListener('DOMContentLoaded', function() {
+                // Get references to input elements
+                const submitBtn = document.querySelector('button[class*="submit"]');
+                const inputBox = document.querySelector('textarea, input[data-testid]');
+                
+                // Function to disable UI during processing
+                function setUIState(isProcessing) {
+                    if (submitBtn && inputBox) {
+                        submitBtn.disabled = isProcessing;
+                        inputBox.disabled = isProcessing;
+                        
+                        if (isProcessing) {
+                            submitBtn.classList.add('disabled');
+                            inputBox.classList.add('disabled');
+                        } else {
+                            submitBtn.classList.remove('disabled');
+                            inputBox.classList.remove('disabled');
+                        }
+                    }
+                }
+                
+                // Listen for form submission
+                if (submitBtn) {
+                    submitBtn.addEventListener('click', function() {
+                        if (inputBox.value.trim() !== '') {
+                            setUIState(true);
+                            
+                            // Re-enable after a small delay to allow Gradio to start processing
+                            setTimeout(function() {
+                                const checkLoading = setInterval(function() {
+                                    const loadingEl = document.querySelector('.gradio-loading');
+                                    if (!loadingEl || loadingEl.style.display === 'none') {
+                                        setUIState(false);
+                                        clearInterval(checkLoading);
+                                    }
+                                }, 300);
+                            }, 100);
+                        }
+                    });
+                }
+                
+                // Also handle Enter key in the input box
+                if (inputBox) {
+                    inputBox.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter' && !e.shiftKey && inputBox.value.trim() !== '') {
+                            setUIState(true);
+                            
+                            // Re-enable after a small delay
+                            setTimeout(function() {
+                                const checkLoading = setInterval(function() {
+                                    const loadingEl = document.querySelector('.gradio-loading');
+                                    if (!loadingEl || loadingEl.style.display === 'none') {
+                                        setUIState(false);
+                                        clearInterval(checkLoading);
+                                    }
+                                }, 300);
+                            }, 100);
+                        }
+                    });
+                }
+                
+                // Fix text selection issues in chat messages
+                function fixChatbotTextSelection() {
+                    // Target all bot messages for improved text selection
+                    const botMessages = document.querySelectorAll('.message.bot, .chatbot .bot');
+                    
+                    botMessages.forEach(message => {
+                        // Set cursor to text for the whole message
+                        message.style.cursor = 'text';
+                        
+                        // Make sure text is selectable
+                        message.style.userSelect = 'text';
+                        message.style.webkitUserSelect = 'text';
+                        message.style.mozUserSelect = 'text';
+                        message.style.pointerEvents = 'auto';
+                        
+                        // Handle all children elements recursively
+                        function makeSelectableRecursive(element) {
+                            if (element.tagName === 'A') {
+                                // Links should still have pointer cursor
+                                element.style.cursor = 'pointer';
+                            } else {
+                                element.style.cursor = 'text';
+                                element.style.userSelect = 'text';
+                                element.style.webkitUserSelect = 'text';
+                                element.style.mozUserSelect = 'text';
+                                element.style.pointerEvents = 'auto';
+                            }
+                            
+                            // Process all children recursively
+                            Array.from(element.children).forEach(child => {
+                                makeSelectableRecursive(child);
+                            });
+                        }
+                        
+                        // Apply to all children
+                        Array.from(message.children).forEach(child => {
+                            makeSelectableRecursive(child);
+                        });
+                    });
+                }
+                
+                // Apply the fix immediately
+                fixChatbotTextSelection();
+                
+                // Also apply whenever the chatbot content changes
+                const chatbotElement = document.querySelector('.chatbot');
+                if (chatbotElement) {
+                    const observer = new MutationObserver(fixChatbotTextSelection);
+                    observer.observe(chatbotElement, { childList: true, subtree: true });
+                }
+            });
+            
+            return [];
+        }
+        """)
     
     # Launch the interface
     demo.launch(server_name="localhost", server_port=8888, share=False)

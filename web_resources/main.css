@@ -266,3 +266,42 @@ textarea::placeholder {
 .tip-section.time-tip li {
     margin-bottom: 5px;
 }
+
+/* Style for making chat responses selectable */
+.bot-message, 
+.message.bot, 
+.message.bot p, 
+.message.bot div, 
+.chat-response, 
+.response-content, 
+.chatbot .bot .message-wrap,
+.chatbot .message-wrap {
+    cursor: text !important;
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    pointer-events: auto !important;
+}
+
+/* Ensure links within the response still have the pointer cursor */
+.chat-response a, 
+.message.bot a, 
+.bot-message a {
+    cursor: pointer !important;
+}
+
+/* Override any existing styles that might interfere with text selection */
+.message, .message * {
+    pointer-events: auto !important;
+}
+
+/* Fix for Gradio's container that might interfere with selection */
+.gradio-container .prose {
+    cursor: text !important;
+}
+
+.message.bot code, 
+.message.bot pre {
+    cursor: text !important;
+    user-select: all !important; /* Allow selecting all code with a double click */
+}

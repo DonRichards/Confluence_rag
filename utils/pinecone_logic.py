@@ -403,6 +403,22 @@ def query_pinecone(index, query_text, top_k=8, filter_by_space=None, similarity_
             # Add a variation focused on current/recent content
             if not any(time_word in query.lower() for time_word in ['recent', 'latest', 'new', 'current', 'last week', 'this month']):
                 variations.append(query + ' recent')
+                
+            # Handle different terminology variations
+            # "Working Groups" vs "Workgroups"
+            if "working groups" in query.lower():
+                workgroups_variation = query.lower().replace("working groups", "workgroups")
+                variations.append(workgroups_variation)
+            elif "workgroups" in query.lower():
+                working_groups_variation = query.lower().replace("workgroups", "working groups")
+                variations.append(working_groups_variation)
+                
+            # "Interest Group" variations
+            if "ai" in query.lower() and ("working groups" in query.lower() or "workgroups" in query.lower()):
+                variations.append("AI Interest Group Working Groups")
+                variations.append("AI Interest Group Workgroups")
+                variations.append("Library AI Working Groups")
+                variations.append("Library AI Workgroups")
             
             # Remove duplicates and return
             return list(dict.fromkeys(variations))
