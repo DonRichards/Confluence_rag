@@ -17,14 +17,17 @@ import gradio as gr
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Default models
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"  # Upgraded from ada-002
+DEFAULT_CHAT_MODEL = "gpt-4-turbo-preview"  # Upgraded from gpt-4-turbo
 
 # get embeddings
-def get_embeddings(query, model_emb):
+def get_embeddings(query, model_emb=DEFAULT_EMBEDDING_MODEL):
    embedding = openai_client.embeddings.create(input = query, model=model_emb)
-   print("Dimension of query embedding: ", len(embedding.data[0].embedding))
+   print(f"Dimension of query embedding: {len(embedding.data[0].embedding)}")
    return embedding
 
-def create_embeddings(text, model_emb):   
+def create_embeddings(text, model_emb=DEFAULT_EMBEDDING_MODEL):   
     response = openai_client.embeddings.create(
         input=text,
         model=model_emb
@@ -49,12 +52,13 @@ def add_prompt_messages(role, content, messages):
     messages.append(json_message)
     return messages
 
-def get_chat_completion_messages(messages, model_chat, temperature=0.0): 
+def get_chat_completion_messages(messages, model_chat=DEFAULT_CHAT_MODEL, temperature=0.0, max_tokens=4096): 
     try:
         response = openai_client.chat.completions.create(
         model=model_chat,
         messages=messages,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
     except Exception as e:
         print(e)

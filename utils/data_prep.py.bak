@@ -607,13 +607,7 @@ def process_metadata(row):
         metadata['space'] = row['space']
         
         try:
-            # Convert back to string
-            return json.dumps(metadata)
-        except Exception as e:
-            print(f"Error processing metadata for row {row['id']}: {str(e)}")
-            # Return a basic metadata if processing fails
-            return json.dumps({
-                'source': row['source'],
+        try:\            # Convert back to string\            return json.dumps(metadata)\        except Exception as e:\            print(f"Error processing metadata for row {row["id"]}: {str(e)}")\            # Return a basic metadata if processing fails\            return json.dumps({\                "source": row["source"],\                "text": truncate_text(row["content"]),\                "space": row["space"]\            })
                 'text': truncate_text(row['content']),
                 'space': row['space']
             })
@@ -623,7 +617,7 @@ def process_metadata(row):
             'source': row.get('source', 'unknown'),
             'text': truncate_text(row.get('content', '')),
             'space': row.get('space', 'unknown')
-        }) 
+        })
 
 # Function to generate embeddings and add to DataFrame
 def generate_embeddings_and_add_to_df(df, model_for_openai_embedding):

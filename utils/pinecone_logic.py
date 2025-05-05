@@ -52,7 +52,7 @@ def get_pinecone_index(index_name):
         index_created = True
         pinecone.create_index(
             name=index_name, 
-            dimension=1536, 
+            dimension=3072, 
             metric='cosine', 
             spec=ServerlessSpec(cloud='aws', region=PINECONE_ENVIRONMENT))
             
@@ -299,172 +299,293 @@ def verify_pinecone_upsert(index, query_sample=None):
         return False
 
 # Function to query Pinecone index
-def query_pinecone(index, query_text, top_k=5, filter_by_space=None, similarity_threshold=0.0):
+def query_pinecone(index, query_text, top_k=8, filter_by_space=None, similarity_threshold=0.3):
     """
-    Query Pinecone index with an embedding of the query text.
+    Query Pinecone index with an improved hybrid search approach.
     
     Args:
         index: The Pinecone index to query
         query_text: The text query to search for
-        top_k: Number of results to return (default: 5)
+        top_k: Number of results to return (default: 8)
         filter_by_space: Optional space/namespace to filter results by
-        similarity_threshold: Minimum similarity score to include in results (default: 0.0)
+        similarity_threshold: Minimum similarity score to include in results (default: 0.3)
         
     Returns:
-        List of tuples (source_url, text_content, score) of the top matching documents
+        List of tuples (source_url, text_content, score, date) of the top matching documents
     """
     try:
-        from utils.openai_logic import get_embeddings
+        from utils.openai_logic import get_embeddings, DEFAULT_EMBEDDING_MODEL
+        import re
+        import nltk
+        from nltk.tokenize import word_tokenize
+        from nltk.corpus import stopwords
+        
+        # Download NLTK resources if needed
+        try:
+            nltk.data.find('tokenizers/punkt')
+            nltk.data.find('corpora/stopwords')
+        except LookupError:
+            nltk.download('punkt')
+            nltk.download('stopwords')
         
         # Get configured spaces from environment
         configured_spaces = os.getenv('SPACES', '').split(',')
         configured_spaces = [space.strip() for space in configured_spaces if space.strip()]
         
-        # First check index stats to see available namespaces
-        try:
-            stats = index.describe_index_stats()
-            print("Available namespaces in index:")
-            if hasattr(stats, 'namespaces'):
-                namespaces = list(stats.namespaces.keys())
-            elif 'namespaces' in stats:
-                namespaces = list(stats.get('namespaces', {}).keys())
+        # Get available namespaces
+        stats = index.describe_index_stats()
+        namespaces = []
+        
+        # Convert to vector counts dictionary based on the return type
+        if hasattr(stats, 'namespaces'):
+            namespaces = list(stats.namespaces.keys())
+        elif 'namespaces' in stats:
+            namespaces = list(stats.get('namespaces', {}).keys())
+        
+        # Sort namespaces for consistent handling
+        namespaces.sort()
+        
+        # Print namespaces
+        print(f"Available namespaces: {namespaces}")
+        
+        # Default to None if no filter specified
+        if not filter_by_space:
+            configured_space = os.getenv('DEFAULT_SPACE')
+            if configured_space and configured_space.strip():
+                filter_by_space = configured_space.strip()
+                print(f"Using default space filter: {filter_by_space}")
+        
+        print(f"Space filter: {filter_by_space if filter_by_space else 'None'}")
+        
+        # Check if filter_by_space is a valid namespace
+        if filter_by_space and filter_by_space not in namespaces:
+            # Try to find a matching namespace
+            matching_namespaces = [ns for ns in namespaces if filter_by_space.lower() in ns.lower()]
+            if matching_namespaces:
+                filter_by_space = matching_namespaces[0]
+                print(f"Using closest matching namespace: {filter_by_space}")
             else:
-                namespaces = ['']
+                print(f"Warning: Specified space '{filter_by_space}' not found in available namespaces. Searching across all spaces.")
+                filter_by_space = None
+        
+        # Function to generate query variations for better retrieval
+        def generate_query_variations(query):
+            """
+            Generate multiple variations of the query to improve retrieval performance.
+            """
+            # Original query is always included
+            variations = [query]
+            
+            # Tokenize the query
+            tokens = word_tokenize(query.lower())
+            stop_words = set(stopwords.words('english'))
+            important_words = [token for token in tokens if token.isalnum() and token not in stop_words]
+            
+            # Convert questions to statements
+            if query.endswith('?'):
+                statement = query.rstrip('?')
+                variations.append(statement)
+            
+            # Common question reformulations
+            if query.lower().startswith('what is'):
+                variations.append(query[8:] + ' definition')
+                variations.append('define ' + query[8:])
+            
+            if query.lower().startswith('how to'):
+                variations.append(query[7:] + ' process')
+                variations.append(query[7:] + ' steps')
+                variations.append('steps for ' + query[7:])
+            
+            # Add a variation with just the important keywords
+            if len(important_words) > 2:
+                variations.append(' '.join(important_words))
+            
+            # Add a variation focused on current/recent content
+            if not any(time_word in query.lower() for time_word in ['recent', 'latest', 'new', 'current', 'last week', 'this month']):
+                variations.append(query + ' recent')
+            
+            # Remove duplicates and return
+            return list(dict.fromkeys(variations))
+        
+        query_variations = generate_query_variations(query_text)
+        
+        # Generate embeddings for all query variations
+        all_results = []
+        
+        # Track unique IDs to prevent duplicates
+        seen_ids = set()
+        
+        # Get 3x more results than needed for reranking
+        search_top_k = max(top_k * 3, 20)
+        
+        # Process the original query and its variations
+        for i, query_variant in enumerate(query_variations):
+            print(f"Processing query variation {i+1}/{len(query_variations)}: '{query_variant}'")
+            
+            # Generate embedding for the query variant
+            embedding_response = get_embeddings(query_variant, DEFAULT_EMBEDDING_MODEL)
+            if not embedding_response or not hasattr(embedding_response, 'data') or not embedding_response.data:
+                print(f"Warning: Failed to generate embedding for query variation {i+1}")
+                continue
                 
-            for ns in namespaces:
-                ns_display = f"'{ns}'" if ns else "''"
-                if 'namespaces' in stats and ns in stats['namespaces']:
-                    count = stats['namespaces'][ns].get('vector_count', 0)
-                    print(f"  {ns_display}: {count} vectors")
-                else:
-                    print(f"  {ns_display}")
+            query_embedding = embedding_response.data[0].embedding
+            
+            # Query Pinecone
+            try:
+                # First try sparse-dense hybrid search if available
+                try:
+                    # DISABLED: Hybrid search not supported in this index configuration
+                    """
+                    # Use alpha=0.5 for equal weight between sparse and dense vectors
+                    query_params = {
+                        "vector": query_embedding,
+                        "top_k": search_top_k,
+                        "include_metadata": True,
+                        "include_values": False,
+                        "alpha": 0.5,  # Balance between sparse and dense
+                        "sparse_vector": {"indices": [], "values": []}  # Will be populated if BM25 is available
+                    }
                     
-            # Print configured spaces for comparison
-            if configured_spaces:
-                print(f"Configured spaces from environment: {configured_spaces}")
-                # Check which configured spaces exist in the index
-                for space in configured_spaces:
-                    if space in namespaces:
-                        print(f"  Configured space '{space}' exists in index")
-                    else:
-                        print(f"  Warning: Configured space '{space}' not found in index")
-        except Exception as e:
-            print(f"Error checking index stats: {e}")
-            namespaces = ['']
-        
-        namespace = None
-        if filter_by_space:
-            # If specific space is requested, find best match among available namespaces
-            print(f"Filtering by space: '{filter_by_space}'")
-            
-            # Check for exact match first
-            if filter_by_space in namespaces:
-                namespace = filter_by_space
-                print(f"Found exact namespace match: '{namespace}'")
-            else:
-                # Check for case-insensitive match
-                for ns in namespaces:
-                    if ns.lower() == filter_by_space.lower():
-                        namespace = ns
-                        print(f"Found case-insensitive namespace match: '{namespace}'")
-                        break
+                    # Try to generate sparse vector using BM25
+                    try:
+                        from sklearn.feature_extraction.text import TfidfVectorizer
+                        import numpy as np
+                        
+                        # Create a simple BM25-like sparse vector
+                        vectorizer = TfidfVectorizer(lowercase=True, token_pattern=r"(?u)\b\w+\b")
+                        vectorizer.fit([query_variant])
+                        
+                        # Get feature names
+                        feature_names = vectorizer.get_feature_names_out()
+                        
+                        # Create sparse vector
+                        sparse_vec = vectorizer.transform([query_variant])
+                        indices = sparse_vec.indices.tolist()
+                        values = sparse_vec.data.tolist()
+                        
+                        query_params["sparse_vector"] = {
+                            "indices": indices,
+                            "values": values
+                        }
+                        
+                        print(f"Using hybrid search with {len(indices)} sparse terms")
+                    except Exception as e:
+                        print(f"Warning: Failed to create sparse vector: {e}. Falling back to dense-only search.")
+                        # Remove sparse_vector parameter
+                        query_params.pop("sparse_vector", None)
+                        query_params.pop("alpha", None)
+                    
+                    # Add namespace filter if specified
+                    if filter_by_space:
+                        query_params["namespace"] = filter_by_space
+                    
+                    # Execute the query
+                    results = index.query(**query_params)
+                    """
+                    # Standard vector search as default - hybrid search disabled
+                    raise Exception("Hybrid search explicitly disabled - using standard vector search")
+                    
+                except Exception as hybrid_error:
+                    print(f"Using standard vector search (hybrid search disabled)")
+                    
+                    # Standard vector search as default
+                    query_params = {
+                        "vector": query_embedding,
+                        "top_k": search_top_k,
+                        "include_metadata": True,
+                        "include_values": False
+                    }
+                    
+                    # Add namespace filter if specified
+                    if filter_by_space:
+                        query_params["namespace"] = filter_by_space
+                    
+                    # Execute the query
+                    results = index.query(**query_params)
                 
-                # If still no match, look for partial matches
-                if not namespace:
-                    partial_matches = [ns for ns in namespaces if filter_by_space.lower() in ns.lower()]
-                    if partial_matches:
-                        namespace = partial_matches[0]
-                        print(f"Using partial namespace match: '{namespace}'")
-                    else:
-                        print(f"No matching namespace found for '{filter_by_space}'")
-                        # Instead of defaulting to '' which searches everything, return empty
-                        return []
-        elif configured_spaces and len(configured_spaces) == 1:
-            # If only one space is configured and no specific filter is requested, use that space
-            space = configured_spaces[0]
-            if space in namespaces:
-                namespace = space
-                print(f"Using single configured space: '{namespace}'")
-        # Always default to 'all' namespace if it exists and no other namespace was selected
-        elif 'all' in namespaces and not namespace:
-            namespace = 'all'
-            
-        print(f"Querying Pinecone with: '{query_text}' using namespace: {namespace if namespace else 'all'}")
+                # Process matches
+                for match in results.get('matches', []):
+                    match_id = match.get('id')
+                    
+                    # Skip if we've already seen this ID
+                    if match_id in seen_ids:
+                        continue
+                    
+                    seen_ids.add(match_id)
+                    
+                    score = match.get('score', 0)
+                    metadata = match.get('metadata', {})
+                    
+                    # Skip low-scoring matches
+                    if score < similarity_threshold:
+                        continue
+                    
+                    # Get basic metadata
+                    source = metadata.get('url', 'Unknown source')
+                    text = metadata.get('text', '')
+                    
+                    # Extract date information
+                    doc_date = metadata.get('last_modified', '')
+                    
+                    # Create recency boost for newer content
+                    recency_boost = 0
+                    if doc_date:
+                        try:
+                            from datetime import datetime, timedelta
+                            from dateutil import parser
+                            
+                            # Parse the date
+                            parsed_date = parser.parse(doc_date)
+                            
+                            # Make sure the date is timezone-naive to avoid comparison issues
+                            if parsed_date.tzinfo is not None:
+                                parsed_date = parsed_date.replace(tzinfo=None)
+                            
+                            # Get current time as timezone-naive 
+                            current_time = datetime.now().replace(tzinfo=None)
+                            
+                            # Calculate days since creation/modification
+                            days_ago = (current_time - parsed_date).days
+                            
+                            # Apply a recency boost (up to 0.05 extra score for very recent content)
+                            # Content from last 30 days gets a boost
+                            if days_ago <= 30:
+                                recency_boost = 0.05 * (1 - days_ago/30)
+                        except Exception as date_error:
+                            print(f"Date parsing error: {date_error}")
+                    
+                    # Apply text relevance boost based on exact term matching
+                    text_boost = 0
+                    if text:
+                        # Count how many query terms appear in the text
+                        query_terms = set(word_tokenize(query_variant.lower()))
+                        text_terms = set(word_tokenize(text.lower()))
+                        matching_terms = query_terms.intersection(text_terms)
+                        
+                        # Calculate coverage percentage
+                        if query_terms:
+                            coverage = len(matching_terms) / len(query_terms)
+                            # Add up to 0.05 for full term coverage
+                            text_boost = 0.05 * coverage
+                    
+                    # Combined score with boosts
+                    adjusted_score = score + recency_boost + text_boost
+                    
+                    # Create result tuple with source, text, adjusted score and date
+                    all_results.append((source, text, adjusted_score, doc_date))
+                
+            except Exception as e:
+                print(f"Error querying Pinecone with variation {i+1}: {e}")
         
-        # Generate embedding for the query
-        embedding_response = get_embeddings(query_text, "text-embedding-ada-002")
-        if not embedding_response or not hasattr(embedding_response, 'data') or not embedding_response.data:
-            print("Error: Failed to generate embedding for query")
-            return []
-            
-        query_embedding = embedding_response.data[0].embedding
-        print(f"Dimension of query embedding: {len(query_embedding)}")
+        # Deduplicate, sort by score, and limit to top_k results
+        all_results.sort(key=lambda x: x[2], reverse=True)
+        final_results = all_results[:top_k]
         
-        # Increase top_k to retrieve more potential matches
-        search_top_k = top_k * 3  # Get more results than needed to filter by threshold
-        
-        # Query Pinecone
-        results = index.query(
-            vector=query_embedding,
-            top_k=search_top_k,
-            include_metadata=True,
-            namespace=namespace
-        )
-        
-        if not results or 'matches' not in results:
-            print("No results returned from Pinecone query")
-            return []
-            
-        # Process results
-        extracted_info = []
-        for match in results['matches']:
-            # Extract metadata
-            metadata = match.get('metadata', {})
-            
-            # Use a hierarchy of fields for source URL
-            source = None
-            if 'source' in metadata:
-                source = metadata['source']
-            elif 'url' in metadata:
-                source = metadata['url']
-            else:
-                source = 'No source available'
-            
-            # Get text content with fallbacks
-            text = None
-            if 'text' in metadata:
-                text = metadata['text']
-            elif 'content' in metadata:
-                text = metadata['content']
-            elif 'title' in metadata:
-                # If no content, use title as a minimal text representation
-                text = f"Title: {metadata['title']}"
-            else:
-                text = 'No content available'
-            
-            # Get space information
-            space_info = ""
-            if 'space' in metadata:
-                space_info = f" [space: {metadata['space']}]"
-            elif 'space_key' in metadata:
-                space_info = f" [space: {metadata['space_key']}]"
-            
-            # Get score
-            score = match.get('score', 0.0)
-            
-            # Only include results above the threshold
-            if score >= similarity_threshold:
-                print(f"Match{space_info} - score: {score:.4f}, source: {source[:50]}...")
-                extracted_info.append((source, text, score))
-        
-        # Limit to top_k results after filtering
-        extracted_info = extracted_info[:top_k]
-        
-        print(f"Query returned {len(extracted_info)} results")
-        return extracted_info
+        print(f"Found {len(final_results)} results after filtering and re-ranking")
+        return final_results
         
     except Exception as e:
-        print(f"Error querying Pinecone: {e}")
+        print(f"Error in query_pinecone: {str(e)}")
         import traceback
         traceback.print_exc()
         return []

@@ -180,8 +180,7 @@ def process_space_file(file_path, index, model_name, namespace_name, incremental
                     'title': str(row['title']) if pd.notna(row['title']) else '',
                     'url': str(row['url']) if pd.notna(row['url']) else '',
                     'space_key': str(row['space_key']) if pd.notna(row['space_key']) else '',
-                    # Add other relevant metadata fields here, converting types if necessary
-                    # Example: 'last_modified': str(row['last_modified']) if pd.notna(row['last_modified']) else ''
+                    'last_modified': str(row['last_modified']) if pd.notna(row.get('last_modified', '')) else ''
                  }
                  # Ensure no None values in metadata
                  metadata.append({k: v for k, v in meta.items() if v is not None})
@@ -243,7 +242,7 @@ def main():
         return
     openai.api_key = openai_api_key
     
-    model_name = "text-embedding-ada-002" # OpenAI model name
+    model_name = "text-embedding-3-large" # Updated from text-embedding-ada-002
     
     # Initialize Pinecone
     # Corrected index name based on log output checking for 'default-index'
@@ -271,11 +270,32 @@ def main():
         print(f"Error: Directory '{space_files_dir}' not found.")
         sys.exit(1)
         
-    space_files = [f for f in os.listdir(space_files_dir) if f.endswith('.csv')]
+    # Read configured spaces from environment
+    configured_spaces = os.getenv('SPACES', '').split(',')
+    configured_spaces = [space.strip() for space in configured_spaces if space.strip()]
+    
+    # Always include 'all' namespace if it exists
+    configured_spaces.append('all')
+    
+    print(f"Configured spaces from environment: {configured_spaces}")
+    
+    # Get all CSV files
+    all_space_files = [f for f in os.listdir(space_files_dir) if f.endswith('.csv')]
+    
+    # Filter to only include configured spaces
+    space_files = []
+    for space_file in all_space_files:
+        namespace_name = space_file.replace('.csv', '')
+        if namespace_name in configured_spaces:
+            space_files.append(space_file)
+        else:
+            print(f"Skipping {space_file} - not in configured spaces")
     
     if not space_files:
-        print(f"No CSV files found in '{space_files_dir}'. Ensure app_confluence.py ran successfully.")
+        print(f"No matching CSV files found in '{space_files_dir}' for configured spaces. Ensure app_confluence.py ran successfully.")
         sys.exit(1)
+        
+    print(f"Processing {len(space_files)} of {len(all_space_files)} total space files")
 
     all_successful = True
     for space_file in space_files:

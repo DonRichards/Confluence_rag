@@ -72,4 +72,8 @@ Key Conventions:
 5. Use version control (e.g., git) for tracking changes in code and configurations.
 
 Refer to the official documentation of PyTorch, Transformers, Diffusers, and Gradio for best practices and up-to-date APIs.
-      
+
+Generating Tests Scripts:
+1. The filename should be the action it's doing (e.g., test or check).
+2. The file should be placed in the testing_scripts/ folder.
+3. The Executable flag should be applied to the file `chmod +x FILE`.

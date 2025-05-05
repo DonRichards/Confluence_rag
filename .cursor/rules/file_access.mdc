@@ -1,9 +1,8 @@
 ---
 description: 
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 # File Access Rules
 
 ## Allowed Files
-- .env

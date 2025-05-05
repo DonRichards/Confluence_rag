@@ -21,8 +21,11 @@ When helping with this project:
 7. Emphasize namespace isolation for multi-tenant deployments
 8. Recommend regular database updates for freshness
 9. Always use and suggest `pipenv run python` to run python
+10. When you need to stop the app_pinecone_openai.py script to test, run `kill -9 $(lsof -t -i :8888)` to kill the service instead of using the command `pkill -f "python app_pinecone_openai.py`
 
 When designing the UI:
 1. Follow the web_resources/design_guide.md to make sure the edit follow the design guide.
 2. Use the main.css for the css values as much as possible instead of embedded the styling.
 3. There is a browser MCP that you can utilize with anything to do with the front end(gui)
+
+

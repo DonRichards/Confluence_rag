@@ -1,0 +1,42 @@
+def process_metadata(row):
+    """Process metadata to ensure it's in a consistent format."""
+    try:
+        # First check if it's a string and convert to dict
+        if isinstance(row['metadata'], str):
+            try:
+                metadata = ast.literal_eval(row['metadata'])
+            except:
+                # If parsing fails, create a basic metadata dict
+                metadata = {
+                    'source': row['source'],
+                    'text': row['content']
+                }
+        else:
+            # Already a dict
+            metadata = row['metadata']
+            
+        # Ensure text is not too long
+        if 'text' in metadata:
+            metadata['text'] = truncate_text(metadata['text'])
+            
+        # Add space information to metadata
+        metadata['space'] = row['space']
+        
+        try:
+            # Convert back to string
+            return json.dumps(metadata)
+        except Exception as e:
+            print(f"Error processing metadata for row {row['id']}: {str(e)}")
+            # Return a basic metadata if processing fails
+            return json.dumps({
+                'source': row['source'],
+                'text': truncate_text(row['content']),
+                'space': row['space']
+            })
+    except Exception as e:
+        print(f"Error in process_metadata: {str(e)}")
+        return json.dumps({
+            'source': row.get('source', 'unknown'),
+            'text': truncate_text(row.get('content', '')),
+            'space': row.get('space', 'unknown')
+        }) 
